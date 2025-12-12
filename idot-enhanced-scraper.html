@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDOT Enhanced Contract Scraper</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            black: '#0a0a0a',
+                            dark: '#1f1f1f',
+                            gray: '#e5e5e5',
+                            light: '#f9f9f9',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #000;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .pulse-btn {
+            animation: pulse-black 2s infinite;
+        }
+        @keyframes pulse-black {
+            0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 0, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+        }
+        .tab {
+            @apply px-6 py-3 font-semibold cursor-pointer transition-all;
+        }
+        .tab-active {
+            @apply bg-brand-black text-white;
+        }
+        .tab-inactive {
+            @apply bg-gray-200 text-gray-600 hover:bg-gray-300;
+        }
+    </style>
+</head>
+<body class="bg-brand-light text-brand-black min-h-screen flex flex-col font-sans">
+
+    <header class="bg-brand-black text-white py-6 shadow-md">
+        <div class="container mx-auto px-6">
+            <h1 class="text-2xl font-bold tracking-tight">IDOT Enhanced Contract Scraper</h1>
+            <p class="text-gray-400 text-sm mt-1">Repository-Powered Data Extraction Tool</p>
+        </div>
+    </header>
+
+    <main class="flex-grow container mx-auto px-6 py-8 max-w-5xl">
+
+        <div id="system-status" class="mb-6 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-sm flex items-center hidden">
+            <span class="mr-2 loader border-yellow-800 border-t-transparent"></span>
+            Initializing Python Environment (Pyodide)...
+        </div>
+
+        <!-- Mode Selector -->
+        <div class="bg-white border border-gray-200 rounded-lg shadow-sm mb-6 overflow-hidden">
+            <div class="flex border-b border-gray-200">
+                <div id="tab-repository" class="tab tab-active" onclick="switchMode('repository')">
+                    📋 Repository Mode
+                </div>
+                <div id="tab-manual" class="tab tab-inactive" onclick="switchMode('manual')">
+                    🔗 Manual URL Mode
+                </div>
+            </div>
+        </div>
+
+        <!-- Repository Mode -->
+        <div id="mode-repository" class="mode-content">
+            <section class="bg-white border border-gray-200 rounded-lg p-6 shadow-sm mb-8">
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2">Repository Page URL</h2>
+                <p class="text-sm text-gray-600 mb-4">
+                    Enter the URL of an IDOT Letting page (e.g., Notice of Letting). The tool will automatically extract and filter contracts based on county and status criteria.
+                </p>
+                <div class="mb-4">
+                    <label for="repo-url" class="block font-semibold mb-2">Repository URL</label>
+                    <input 
+                        type="text" 
+                        id="repo-url"
+                        class="w-full p-3 border-2 border-gray-300 rounded-md focus:border-brand-black focus:ring-0 transition"
+                        placeholder="https://webapps1.dot.illinois.gov/WCTB/LbLettingDetail/..."
+                    >
+                </div>
+                <div class="bg-blue-50 border border-blue-200 rounded p-4 text-sm">
+                    <h3 class="font-bold mb-2">Filter Criteria:</h3>
+                    <ul class="list-disc list-inside space-y-1 text-gray-700">
+                        <li><strong>Counties:</strong> Boone, Cook, Grundy, DuPage, Kane, Kendall, Lake, McHenry, Will, or Various</li>
+                        <li><strong>Status:</strong> Active or Awarded</li>
+                    </ul>
+                </div>
+            </section>
+        </div>
+
+        <!-- Manual Mode -->
+        <div id="mode-manual" class="mode-content hidden">
+            <section class="bg-white border border-gray-200 rounded-lg p-6 shadow-sm mb-8">
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2">Contract Detail URLs</h2>
+                <div class="flex justify-between items-end mb-2">
+                    <label for="url-input" class="font-semibold">Target URLs</label>
+                    <div class="flex gap-2">
+                        <button id="clear-btn" class="text-xs text-red-600 hover:text-red-800 font-medium underline px-2">
+                            Clear All
+                        </button>
+                        <input type="file" id="file-upload" accept=".txt" class="hidden">
+                        <button id="upload-btn" class="text-xs bg-gray-200 hover:bg-gray-300 text-brand-black px-3 py-1 rounded transition">
+                            Upload .TXT File
+                        </button>
+                    </div>
+                </div>
+                <textarea 
+                    id="url-input" 
+                    rows="8" 
+                    class="w-full p-4 border-2 border-gray-300 rounded-md focus:border-brand-black focus:ring-0 transition font-mono text-sm bg-white"
+                    placeholder="https://webapps1.dot.illinois.gov/WCTB/LbContractDetail/...&#10;https://webapps1.dot.illinois.gov/WCTB/LbContractDetail/..."></textarea>
+            </section>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex flex-col items-center justify-center mb-10">
+            <button id="scrape-btn" disabled class="bg-brand-black text-white px-8 py-3 rounded-md font-semibold text-lg shadow-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-3 w-full md:w-auto justify-center">
+                <span>Start Scrape</span>
+            </button>
+            
+            <button id="download-btn" class="hidden bg-green-700 text-white px-8 py-3 rounded-md font-semibold text-lg shadow-lg hover:bg-green-800 transition flex items-center gap-3 pulse-btn w-full md:w-auto justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>Download CSV</span>
+            </button>
+        </div>
+
+        <!-- Progress Area -->
+        <section id="progress-section" class="hidden bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="font-semibold">Processing Status</h3>
+                <span id="progress-text" class="text-sm font-mono text-gray-500">0 / 0</span>
+            </div>
+            
+            <div class="w-full bg-gray-200 rounded-full h-4 mb-6 overflow-hidden">
+                <div id="progress-bar" class="bg-brand-black h-4 rounded-full transition-all duration-300 ease-out" style="width: 0%"></div>
+            </div>
+
+            <div class="bg-gray-50 border border-gray-200 rounded p-4 h-64 overflow-y-auto font-mono text-xs" id="log-container">
+                <div class="text-gray-400 italic">Ready to start...</div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="bg-white border-t border-gray-200 py-6 mt-auto">
+        <div class="container mx-auto px-6 text-center text-gray-500 text-sm">
+            &copy; 2024 IDOT Data Tools. Runs locally in your browser via Pyodide.
+        </div>
+    </footer>
+
+    <script>
+        let pyodide = null;
+        let pyodideReady = false;
+        let csvContent = null;
+        let currentMode = 'repository';
+
+        const els = {
+            statusBanner: document.getElementById('system-status'),
+            repoUrl: document.getElementById('repo-url'),
+            urlInput: document.getElementById('url-input'),
+            fileInput: document.getElementById('file-upload'),
+            uploadBtn: document.getElementById('upload-btn'),
+            clearBtn: document.getElementById('clear-btn'),
+            scrapeBtn: document.getElementById('scrape-btn'),
+            downloadBtn: document.getElementById('download-btn'),
+            progressSection: document.getElementById('progress-section'),
+            progressBar: document.getElementById('progress-bar'),
+            progressText: document.getElementById('progress-text'),
+            logContainer: document.getElementById('log-container'),
+        };
+
+        const pythonScript = `
+import asyncio
+import micropip
+await micropip.install(['requests', 'beautifulsoup4', 'pyodide-http'])
+
+import pyodide_http
+pyodide_http.patch_all()
+
+import requests
+import csv
+import io
+import urllib.parse
+from bs4 import BeautifulSoup
+import re
+
+# Target counties for filtering
+TARGET_COUNTIES = ['Boone', 'Cook', 'Grundy', 'DuPage', 'Kane', 'Kendall', 'Lake', 'McHenry', 'Will', 'Various']
+TARGET_STATUS = ['Active', 'Awarded']
+
+def extract_letting_date(soup):
+    """Extract letting date from repository page header"""
+    try:
+        header = soup.select_one(".col-md-12 > h4")
+        if header:
+            text = header.get_text(strip=True)
+            # Extract first line which contains the date
+            lines = text.split('\\n')
+            if lines:
+                return lines[0].strip()
+    except:
+        pass
+    return 'N/A'
+
+def matches_county_criteria(counties_text):
+    """Check if the counties field contains any target county"""
+    if not counties_text:
+        return False
+    counties_upper = counties_text.upper()
+    return any(county.upper() in counties_upper for county in TARGET_COUNTIES)
+
+def matches_status_criteria(status_text):
+    """Check if status matches target criteria"""
+    if not status_text:
+        return False
+    status_clean = status_text.strip()
+    return any(target.lower() in status_clean.lower() for target in TARGET_STATUS)
+
+async def scrape_repository_page(repo_url, js_callback):
+    """
+    Scrapes the repository page and returns filtered contract metadata
+    """
+    js_callback(0, 1, repo_url, "FETCHING_REPO")
+    await asyncio.sleep(0.05)
+    
+    try:
+        encoded_url = urllib.parse.quote(repo_url, safe='')
+        proxy_url = f"https://corsproxy.io/?{encoded_url}"
+        
+        response = requests.get(proxy_url, timeout=15)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Extract letting date
+        letting_date = extract_letting_date(soup)
+        
+        # Find the main contracts table
+        table = soup.find('table', class_='table-striped')
+        if not table:
+            raise Exception("Could not find contracts table on repository page")
+        
+        tbody = table.find('tbody')
+        if not tbody:
+            raise Exception("Could not find table body")
+        
+        contracts = []
+        rows = tbody.find_all('tr')
+        
+        js_callback(0, len(rows), repo_url, f"PARSING_TABLE|{len(rows)} rows found")
+        
+        for row in rows:
+            try:
+                cells = row.find_all('td')
+                if len(cells) < 8:
+                    continue
+                
+                # Extract data from table
+                item_contract_cell = cells[0]
+                status_cell = cells[1]
+                status_date = cells[2].get_text(strip=True)
+                region = cells[5].get_text(strip=True)
+                district = cells[6].get_text(strip=True)
+                counties = cells[7].get_text(strip=True)
+                bulletin_desc = cells[9].get_text(" ", strip=True) if len(cells) > 9 else 'N/A'
+                
+                # Get status text (from tooltip or direct text)
+                status_link = status_cell.find('a')
+                if status_link and status_link.get('title'):
+                    status = status_link.get_text(strip=True)
+                else:
+                    status = status_cell.get_text(strip=True)
+                
+                # Check filtering criteria
+                if not matches_county_criteria(counties):
+                    continue
+                if not matches_status_criteria(status):
+                    continue
+                
+                # Extract contract URL
+                link = item_contract_cell.find('a')
+                if not link or not link.get('href'):
+                    continue
+                
+                item_contract = link.get_text(strip=True)
+                relative_url = link.get('href')
+                
+                # Convert to absolute URL
+                if relative_url.startswith('/'):
+                    base_url = 'https://webapps1.dot.illinois.gov'
+                    detail_url = base_url + relative_url
+                else:
+                    detail_url = relative_url
+                
+                contracts.append({
+                    'item_contract': item_contract,
+                    'detail_url': detail_url,
+                    'status': status,
+                    'status_date': status_date,
+                    'region': region,
+                    'district': district,
+                    'counties': counties,
+                    'bulletin_desc': bulletin_desc,
+                    'letting_date': letting_date
+                })
+                
+            except Exception as e:
+                continue
+        
+        js_callback(1, 1, repo_url, f"SUCCESS|{len(contracts)} contracts matched criteria")
+        return contracts
+        
+    except Exception as e:
+        js_callback(1, 1, repo_url, f"FAILED: {str(e)}")
+        raise
+
+def scrape_contract_page(html_content, url):
+    """
+    Parses a single contract detail page's HTML to extract structured data.
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+    data = {'Source_URL': url}
+    
+    # 1. Letting Date and Contract ID
+    try:
+        letting_header = soup.select_one(".col-md-12 > h4")
+        if letting_header:
+            raw_text = letting_header.get_text("\\n", strip=True).split("\\n")
+            data['Contract_ID'] = raw_text[1] if len(raw_text) >= 2 else 'N/A'
+    except Exception:
+        data['Contract_ID'] = 'Error'
+
+    # 2. Robust Winner (Contractor/Award) Logic
+    winner_badge = soup.find("span", class_="alert-success")
+    
+    if winner_badge:
+        parent_li = winner_badge.find_parent("li")
+        
+        if parent_li:
+            contractor_strong_tag = parent_li.find("strong")
+            if contractor_strong_tag:
+                data['Contractor'] = contractor_strong_tag.get_text(strip=True)
+            else:
+                data['Contractor'] = 'Name Not Found'
+
+        data['Award_Price'] = winner_badge.get_text(strip=True)
+    else:
+        data['Contractor'] = 'No Award Found'
+        data['Award_Price'] = 'No Award Found'
+
+    # 3. Anchored "Table" Logic
+    def get_table_value_by_header(header_name):
+        try:
+            header = soup.find("th", string=lambda t: t and header_name in t)
+            if header:
+                headers = header.find_parent("tr").find_all("th")
+                col_index = headers.index(header)
+                table = header.find_parent("table")
+                first_row_cells = table.find("tbody").find("tr").find_all("td")
+                if col_index < len(first_row_cells):
+                    return first_row_cells[col_index].get_text(" ", strip=True)
+        except Exception:
+            return 'Error'
+        return 'N/A'
+
+    data['County'] = get_table_value_by_header("County(s)")
+    data['Section'] = get_table_value_by_header("Section(s)")
+    data['Federal_Project_No'] = get_table_value_by_header("Federal Project #")
+
+    return data
+
+async def process_contracts_from_repository(repo_url, js_callback):
+    """
+    Main entry point for repository mode
+    """
+    # Step 1: Scrape repository page
+    contracts = await scrape_repository_page(repo_url, js_callback)
+    
+    if not contracts:
+        return "No contracts matched the filter criteria."
+    
+    # Step 2: Scrape each contract detail page
+    all_scraped_data = []
+    total = len(contracts)
+    
+    for i, contract in enumerate(contracts):
+        detail_url = contract['detail_url']
+        item = contract['item_contract']
+        
+        js_callback(i + 1, total, detail_url, f"FETCHING|{item}")
+        await asyncio.sleep(0.05)
+        
+        try:
+            encoded_url = urllib.parse.quote(detail_url, safe='')
+            proxy_url = f"https://corsproxy.io/?{encoded_url}"
+            
+            response = requests.get(proxy_url, timeout=10)
+            response.raise_for_status()
+            html_content = response.text
+            
+            detail_data = scrape_contract_page(html_content, detail_url)
+            
+            # Merge repository metadata with detail data
+            merged_data = {
+                'Item_Contract': item,
+                'Status': contract['status'],
+                'Status_Date': contract['status_date'],
+                'Region': contract['region'],
+                'District': contract['district'],
+                'Counties': contract['counties'],
+                'Bulletin_Description': contract['bulletin_desc'],
+                'Letting_Date': contract['letting_date'],
+                'Contract_ID': detail_data.get('Contract_ID', 'N/A'),
+                'Contractor': detail_data.get('Contractor', 'N/A'),
+                'Award_Price': detail_data.get('Award_Price', 'N/A'),
+                'County': detail_data.get('County', 'N/A'),
+                'Section': detail_data.get('Section', 'N/A'),
+                'Federal_Project_No': detail_data.get('Federal_Project_No', 'N/A'),
+                'Source_URL': detail_url
+            }
+            
+            all_scraped_data.append(merged_data)
+            
+            contractor = merged_data.get('Contractor', 'N/A')
+            price = merged_data.get('Award_Price', 'N/A')
+            js_callback(i + 1, total, detail_url, f"SUCCESS|{contractor}|{price}")
+            
+        except Exception as e:
+            js_callback(i + 1, total, detail_url, f"FAILED: {str(e)}")
+            all_scraped_data.append({
+                'Item_Contract': item,
+                'Status': contract['status'],
+                'Status_Date': contract['status_date'],
+                'Region': contract['region'],
+                'District': contract['district'],
+                'Counties': contract['counties'],
+                'Bulletin_Description': contract['bulletin_desc'],
+                'Letting_Date': contract['letting_date'],
+                'Contract_ID': f'ERROR: {str(e)[:50]}',
+                'Contractor': 'ERROR',
+                'Award_Price': 'ERROR',
+                'County': 'ERROR',
+                'Section': 'ERROR',
+                'Federal_Project_No': 'ERROR',
+                'Source_URL': detail_url
+            })
+    
+    # Post-process contractor data
+    final_data = []
+    for item in all_scraped_data:
+        full_contractor = item.get('Contractor')
+        
+        if full_contractor and full_contractor not in ('No Award Found', 'Name Not Found') and 'ERROR' not in str(full_contractor):
+            parts = full_contractor.split(' ', 1)
+            item['Contractor_Number'] = parts[0] if len(parts) > 0 else 'N/A'
+            item['Contractor_Name'] = parts[1] if len(parts) > 1 else 'N/A'
+        else:
+            item['Contractor_Number'] = full_contractor
+            item['Contractor_Name'] = full_contractor
+        
+        if 'Contractor' in item:
+            del item['Contractor']
+        final_data.append(item)
+    
+    # Output CSV
+    fieldnames = [
+        'Item_Contract',
+        'Status',
+        'Status_Date',
+        'Region',
+        'District',
+        'Counties',
+        'Bulletin_Description',
+        'Letting_Date',
+        'Contract_ID',
+        'Contractor_Number',
+        'Contractor_Name',
+        'Award_Price',
+        'County',
+        'Section',
+        'Federal_Project_No',
+        'Source_URL'
+    ]
+    
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(final_data)
+    
+    return output.getvalue()
+
+async def process_urls_manual(urls_list, js_callback):
+    """
+    Manual mode - just scrape detail pages directly
+    """
+    all_scraped_data = []
+    urls = [str(u) for u in urls_list]
+
+    for i, url in enumerate(urls):
+        js_callback(i + 1, len(urls), url, "FETCHING")
+        await asyncio.sleep(0.05) 
+
+        try:
+            encoded_url = urllib.parse.quote(url, safe='')
+            proxy_url = f"https://corsproxy.io/?{encoded_url}"
+            
+            response = requests.get(proxy_url, timeout=10)
+            response.raise_for_status() 
+            html_content = response.text
+            
+            data = scrape_contract_page(html_content, url)
+            all_scraped_data.append(data)
+            
+            contractor = data.get('Contractor', 'N/A')
+            price = data.get('Award_Price', 'N/A')
+            js_callback(i + 1, len(urls), url, f"SUCCESS|{contractor}|{price}")
+            
+        except Exception as e:
+            js_callback(i + 1, len(urls), url, f"FAILED: {str(e)}")
+            all_scraped_data.append({
+                'Source_URL': url, 
+                'Contractor': f'ERROR: {str(e)[:50]}', 
+                'Award_Price': 'ERROR',
+                'Contract_ID': 'ERROR', 
+                'County': 'ERROR', 
+                'Section': 'ERROR', 
+                'Federal_Project_No': 'ERROR'
+            })
+
+    final_data = []
+    for item in all_scraped_data:
+        full_contractor = item.get('Contractor')
+
+        if full_contractor and full_contractor not in ('No Award Found', 'Name Not Found') and 'ERROR' not in str(full_contractor):
+            parts = full_contractor.split(' ', 1)
+            item['Contractor_Number'] = parts[0] if len(parts) > 0 else 'N/A'
+            item['Contractor_Name'] = parts[1] if len(parts) > 1 else 'N/A'
+        else:
+            item['Contractor_Number'] = full_contractor
+            item['Contractor_Name'] = full_contractor
+        
+        if 'Contractor' in item:
+            del item['Contractor']
+        final_data.append(item)
+
+    fieldnames = [
+        'Contract_ID', 
+        'Contractor_Number', 
+        'Contractor_Name',    
+        'Award_Price', 
+        'County', 
+        'Section', 
+        'Federal_Project_No',
+        'Source_URL'
+    ]
+    
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(final_data)
+    
+    return output.getvalue()
+`;
+
+        async function initPyodide() {
+            els.statusBanner.classList.remove('hidden');
+            
+            try {
+                pyodide = await loadPyodide();
+                await pyodide.loadPackage("micropip");
+                await pyodide.runPythonAsync(pythonScript);
+                
+                pyodideReady = true;
+                
+                els.statusBanner.innerHTML = '<span class="text-green-700 font-bold mr-2">✓</span> System Ready';
+                els.statusBanner.classList.remove('bg-yellow-50', 'border-yellow-200', 'text-yellow-800');
+                els.statusBanner.classList.add('bg-green-50', 'border-green-200', 'text-green-800');
+                
+                checkInputState();
+                
+                setTimeout(() => {
+                    els.statusBanner.classList.add('hidden');
+                }, 3000);
+
+            } catch (err) {
+                console.error(err);
+                els.statusBanner.innerHTML = `<span class="font-bold text-red-600 mr-2">!</span> Error loading Python: ${err.message}`;
+                els.statusBanner.classList.replace('bg-yellow-50', 'bg-red-50');
+                els.statusBanner.classList.replace('text-yellow-800', 'text-red-800');
+            }
+        }
+
+        function switchMode(mode) {
+            currentMode = mode;
+            
+            // Update tabs
+            document.getElementById('tab-repository').className = 
+                mode === 'repository' ? 'tab tab-active' : 'tab tab-inactive';
+            document.getElementById('tab-manual').className = 
+                mode === 'manual' ? 'tab tab-active' : 'tab tab-inactive';
+            
+            // Update content
+            document.getElementById('mode-repository').classList.toggle('hidden', mode !== 'repository');
+            document.getElementById('mode-manual').classList.toggle('hidden', mode !== 'manual');
+            
+            checkInputState();
+        }
+
+        function checkInputState() {
+            if (!pyodideReady) return;
+            
+            let hasInput = false;
+            if (currentMode === 'repository') {
+                hasInput = els.repoUrl.value.trim().length > 0;
+            } else {
+                hasInput = els.urlInput.value.trim().length > 0;
+            }
+            
+            els.scrapeBtn.disabled = !hasInput;
+        }
+
+        function logToUI(msg, type = 'info') {
+            const div = document.createElement('div');
+            div.className = "mb-1 py-1 border-b border-gray-100 last:border-0 fade-in";
+            
+            let icon = '';
+            let textClass = 'text-gray-600';
+
+            if (type === 'success') {
+                icon = '<span class="text-green-600 font-bold mr-2">✓</span>';
+                textClass = 'text-gray-800';
+            } else if (type === 'error') {
+                icon = '<span class="text-red-600 font-bold mr-2">✗</span>';
+                textClass = 'text-red-600';
+            } else if (type === 'fetching') {
+                icon = '<span class="text-blue-500 font-bold mr-2">➜</span>';
+            } else if (type === 'info') {
+                icon = '<span class="text-purple-600 font-bold mr-2">ℹ</span>';
+            }
+
+            div.innerHTML = `${icon}<span class="${textClass}">${msg}</span>`;
+            els.logContainer.appendChild(div);
+            els.logContainer.scrollTop = els.logContainer.scrollHeight;
+        }
+
+        function pyProgressCallback(current, total, url, status) {
+            els.progressText.innerText = `${current} / ${total}`;
+            
+            const percentage = (current / total) * 100;
+            els.progressBar.style.width = `${percentage}%`;
+
+            if (status.startsWith('FAILED')) {
+                logToUI(`Error: ${url} - ${status.split(':')[1]}`, 'error');
+            } else if (status.startsWith('SUCCESS')) {
+                const parts = status.split('|');
+                if (parts.length >= 3) {
+                    const contractor = parts[1];
+                    const price = parts[2];
+                    logToUI(`Found: ${contractor} (${price})`, 'success');
+                } else {
+                    logToUI(`Scraped: ${url}`, 'success');
+                }
+            } else if (status === 'FETCHING') {
+                logToUI(`Fetching: ${url}...`, 'fetching');
+            } else if (status.startsWith('FETCHING|')) {
+                const item = status.split('|')[1];
+                logToUI(`Fetching contract: ${item}...`, 'fetching');
+            } else if (status === 'FETCHING_REPO') {
+                logToUI(`Fetching repository page...`, 'fetching');
+            } else if (status.startsWith('PARSING_TABLE')) {
+                const info = status.split('|')[1];
+                logToUI(`Parsing table: ${info}`, 'info');
+            }
+        }
+
+        // Event Listeners
+        els.repoUrl.addEventListener('input', checkInputState);
+        els.urlInput.addEventListener('input', checkInputState);
+
+        els.clearBtn.addEventListener('click', () => {
+            els.urlInput.value = '';
+            checkInputState();
+            els.downloadBtn.classList.add('hidden');
+            els.scrapeBtn.classList.remove('hidden');
+            els.progressSection.classList.add('hidden');
+        });
+
+        els.uploadBtn.addEventListener('click', () => els.fileInput.click());
+        els.fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                els.urlInput.value = event.target.result;
+                checkInputState();
+                logToUI("File uploaded successfully.");
+            };
+            reader.readAsText(file);
+            e.target.value = '';
+        });
+
+        els.scrapeBtn.addEventListener('click', async () => {
+            els.scrapeBtn.disabled = true;
+            els.scrapeBtn.innerHTML = '<span class="loader border-white border-t-transparent mr-2"></span> Processing...';
+            
+            els.progressSection.classList.remove('hidden');
+            els.logContainer.innerHTML = '';
+            els.progressBar.style.width = '0%';
+            els.downloadBtn.classList.add('hidden');
+
+            try {
+                if (currentMode === 'repository') {
+                    const repoUrl = els.repoUrl.value.trim();
+                    if (!repoUrl) return;
+                    
+                    els.repoUrl.disabled = true;
+                    els.progressText.innerText = `0 / 0`;
+                    
+                    const processFunc = pyodide.globals.get('process_contracts_from_repository');
+                    csvContent = await processFunc(repoUrl, pyProgressCallback);
+                    
+                    els.repoUrl.disabled = false;
+                } else {
+                    const rawText = els.urlInput.value.trim();
+                    if (!rawText) return;
+                    
+                    const urls = rawText.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+                    els.urlInput.disabled = true;
+                    els.progressText.innerText = `0 / ${urls.length}`;
+                    
+                    const processFunc = pyodide.globals.get('process_urls_manual');
+                    csvContent = await processFunc(urls, pyProgressCallback);
+                    
+                    els.urlInput.disabled = false;
+                }
+
+                els.scrapeBtn.classList.add('hidden');
+                els.downloadBtn.classList.remove('hidden');
+                logToUI("Scraping Complete. Ready to download.", 'success');
+
+            } catch (err) {
+                console.error(err);
+                logToUI(`Critical Error: ${err.message}`, 'error');
+                els.scrapeBtn.innerText = "Retry Scrape";
+                els.scrapeBtn.disabled = false;
+                if (currentMode === 'repository') {
+                    els.repoUrl.disabled = false;
+                } else {
+                    els.urlInput.disabled = false;
+                }
+            }
+        });
+
+        els.downloadBtn.addEventListener('click', () => {
+            if (!csvContent) return;
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `idot_contracts_${timestamp}.csv`);
+            link.style.visibility = 'hidden';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+
+        window.addEventListener('load', initPyodide);
+
+    </script>
+</body>
+</html>
