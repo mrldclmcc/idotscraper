@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDOT Enhanced Contract Data Scraper</title>
+    
+    <!-- Tailwind CSS for Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Pyodide CDN -->
+    <!-- We use Pyodide for robust HTML parsing and network requests via Python (BeautifulSoup, requests) -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+
+    <!-- Custom Config for Corporate Theme -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            black: '#0a0a0a',
+                            dark: '#1f1f1f',
+                            gray: '#e5e5e5',
+                            light: '#f9f9f9',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Custom Utilities */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #0a0a0a; /* Brand Black */
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Enforce smooth scrolling for layout shifts */
+        html { scroll-behavior: smooth; }
+    </style>
+</head>
+<body class="bg-brand-light min-h-screen p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-xl p-6 sm:p-10 border border-brand-gray">
+        <header class="mb-8 border-b pb-4">
+            <h1 class="text-3xl font-extrabold text-brand-black mb-2">Enhanced IDOT Contract Scraper</h1>
+            <p class="text-brand-dark">Automatically find and scrape specific contracts from a Repository site and enrich the output.</p>
+        </header>
+
+        <section id="input-section" class="space-y-6">
+            <div id="repo-input-group">
+                <label for="repoUrlInput" class="block text-sm font-medium text-brand-black mb-2">
+                    Step 1: Repository Site URL (Attempting Direct Fetch)
+                </label>
+                <input type="url" id="repoUrlInput" placeholder="e.g., https://webapps1.dot.illinois.gov/WCTB/NoticeOfLetting" 
+                       class="w-full p-3 border border-brand-gray rounded-lg focus:ring-2 focus:ring-brand-black focus:border-brand-black" required>
+                <p class="mt-2 text-xs text-gray-500">Paste the URL of the IDOT Letting Notice page (the source page with the table).</p>
+            </div>
+            
+            <button id="scrapeBtn" 
+                    class="w-full sm:w-auto px-6 py-3 bg-brand-black text-white font-semibold rounded-lg shadow-md hover:bg-gray-800 transition duration-150 disabled:opacity-50 flex items-center justify-center"
+                    disabled>
+                <span id="button-text">Load Contracts and Scrape Details</span>
+                <span id="spinner" class="loader ml-3 hidden"></span>
+            </button>
+        </section>
+
+        <section id="output-section" class="mt-8">
+            <h2 class="text-xl font-semibold text-brand-black mb-3">Scraping Status</h2>
+            <div id="log-output" class="bg-brand-gray p-4 rounded-lg h-40 overflow-y-auto text-sm font-mono text-brand-dark">
+                Awaiting input...
+            </div>
+            
+            <button id="downloadBtn" 
+                    class="mt-6 w-full sm:w-auto px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 transition duration-150 hidden"
+                    title="Download the combined contract data as a CSV file">
+                Download Final CSV
+            </button>
+        </section>
+        
+        <footer class="mt-10 pt-4 border-t text-xs text-gray-500 text-center">
+            Powered by Pyodide (Python's BeautifulSoup & Requests) for robust web scraping.
+        </footer>
+    </div>
+
+    <script type="text/python" id="python-code">
+import sys
+import js
+import json
+import csv
+from io import StringIO
+from pyodide.http import pyfetch
+from bs4 import BeautifulSoup
+
+# Global Pyodide variable holding the main interpreter instance
+pyodide = None
+
+# --- Configuration ---
+
+# Base URL for contract details pages. This is used to complete the relative links found in the table.
+BASE_URL = "https://webapps1.dot.illinois.gov" 
+
+# Target Counties for filtering
+TARGET_COUNTIES = {
+    "Boone", "Cook", "Grundy", "DuPage", "Kane", "Kendall", "Lake", "McHenry", "Will", "Various"
+}
+
+# Target Status for filtering
+TARGET_STATUSES = {
+    "Active", "Awarded"
+}
+
+# CSV output header structure (must match output_new_scrape.csv)
+FINAL_CSV_HEADERS = [
+    "Item-Contract", "Status", "Status Date", "Region", "District", "Counties", 
+    "Bulletin Description", "", "Letting_Date", "Contract_ID", "Contractor_Number", 
+    "Contractor_Name", "Award_Price", "County", "Section", "Federal_Project_No", "Source_URL"
+]
+
+# --- Core Scraping Functions ---
+
+def parse_detail_page(detail_html):
+    """
+    Parses the HTML content of a single contract detail page to extract 
+    Contractor details, Award Price, and other secondary data points.
+    """
+    soup = BeautifulSoup(detail_html, 'html.parser')
+    
+    # Initialize a dictionary for scraped data
+    data = {
+        "Contract_ID": "",
+        "Contractor_Number": "",
+        "Contractor_Name": "",
+        "Award_Price": "",
+        "County": "",
+        "Section": "",
+        "Federal_Project_No": "",
+    }
+
+    # Find the main data table (assuming structure similar to uploaded file)
+    # This targets the main content area for the key-value pairs
+    main_div = soup.find('div', class_='col-md-9')
+    if not main_div:
+        js.logToUI(f"Warning: Could not find main content div on detail page.", 'warning')
+        return data
+
+    # 1. Scrape Contract, Section, Federal Project Number from the top info block
+    info_table = main_div.find('table', class_='table')
+    if info_table:
+        for row in info_table.find_all('tr'):
+            cols = row.find_all(['th', 'td'])
+            if len(cols) == 2:
+                key = cols[0].get_text(strip=True).replace(':', '')
+                value = cols[1].get_text(strip=True)
+                
+                if 'Contract ID' in key:
+                    data['Contract_ID'] = value
+                elif 'Section' in key:
+                    data['Section'] = value
+                elif 'Federal Project No' in key:
+                    data['Federal_Project_No'] = value
+
+    # 2. Scrape Contractor details and Award Price
+    # Look for the 'Contractor Information' section
+    contractor_header = soup.find('h3', string=lambda t: t and 'Contractor Information' in t)
+    if contractor_header:
+        contractor_table = contractor_header.find_next_sibling('table')
+        if contractor_table:
+            for row in contractor_table.find_all('tr'):
+                # Handle rows with labels and values (e.g., Name, Number, Price)
+                cols = row.find_all(['th', 'td'])
+                if len(cols) == 2:
+                    key = cols[0].get_text(strip=True).replace(':', '')
+                    value = cols[1].get_text(strip=True)
+                    
+                    if 'Contractor Number' in key:
+                        data['Contractor_Number'] = value
+                    elif 'Contractor Name' in key:
+                        data['Contractor_Name'] = value
+                    elif 'Award Price' in key:
+                        # Clean up Award Price to keep just the amount
+                        data['Award_Price'] = value.split('(')[0].strip()
+                        
+    # The repository scrape provides the most reliable 'Counties' data.
+    return data
+
+def scrape_repository_table(repo_html):
+    """
+    Parses the Repository HTML, extracts all data rows from the main table,
+    filters them based on criteria (County/Status), and extracts the URL.
+    """
+    soup = BeautifulSoup(repo_html, 'html.parser')
+    js.logToUI("Parsing repository table and applying filters...", 'info')
+
+    # Find the main contract table 
+    data_table = soup.find('table', class_='table')
+    if not data_table:
+        raise ValueError("Could not find the main data table on the repository page. The page structure might have changed.")
+
+    # Fixed indices based on the sample HTML structure:
+    ITEM_CONTRACT_COL = 0
+    STATUS_COL = 1
+    STATUS_DATE_COL = 2
+    REGION_COL = 3
+    DISTRICT_COL = 4
+    COUNTIES_COL = 5
+    BULLETIN_DESC_COL = 7 
+
+    
+    # Scrape the common Letting Date from the page title or header
+    letting_date = "N/A"
+    letting_header = soup.find('h1')
+    if letting_header and 'Letting' in letting_header.get_text():
+        letting_date = letting_header.get_text(strip=True)
+    
+    if letting_date == "N/A":
+         letting_date_element = soup.find('div', class_='page-header')
+         if letting_date_element:
+             text = letting_date_element.get_text(strip=True)
+             if 'Letting' in text:
+                 letting_date = text.split('\n')[0] 
+
+    
+    
+    results = []
+    total_rows = 0
+    filtered_count = 0
+
+    for row in data_table.find('tbody').find_all('tr'):
+        total_rows += 1
+        cols = row.find_all('td')
+        
+        if len(cols) < 8: # Expect at least 8 columns to cover all needed indices (0-7)
+            continue
+            
+        # Extract data points
+        item_contract_cell = cols[ITEM_CONTRACT_COL]
+        status = cols[STATUS_COL].get_text(strip=True)
+        status_date = cols[STATUS_DATE_COL].get_text(strip=True)
+        region = cols[REGION_COL].get_text(strip=True)
+        district = cols[DISTRICT_COL].get_text(strip=True)
+        counties = cols[COUNTIES_COL].get_text(strip=True)
+        bulletin_desc = cols[BULLETIN_DESC_COL].get_text(strip=True)
+        
+        # Extract URL
+        a_tag = item_contract_cell.find('a', href=True)
+        relative_url = a_tag['href'] if a_tag else None
+        
+        if not relative_url:
+            js.logToUI(f"Skipping row {total_rows}: No Item-Contract URL found.", 'warning')
+            continue
+
+        # --- Apply Filtering Criteria ---
+        is_county_match = any(c.strip() in TARGET_COUNTIES for c in counties.split(','))
+        is_status_match = status in TARGET_STATUSES
+        
+        if is_county_match and is_status_match:
+            full_url = BASE_URL + relative_url
+            filtered_count += 1
+            
+            # Create a dictionary for this contract, containing all repository data
+            # and placeholders for the data to be scraped later
+            contract_data = {
+                # Repository Data
+                "Item-Contract": item_contract_cell.get_text(strip=True),
+                "Status": status,
+                "Status Date": status_date,
+                "Region": region,
+                "District": district,
+                "Counties": counties,
+                "Bulletin Description": bulletin_desc,
+                "Letting_Date": letting_date, # Common date for the whole page
+                "Source_URL": full_url,
+                
+                # Placeholders for Detail Scrape Data
+                "Contract_ID": "",
+                "Contractor_Number": "",
+                "Contractor_Name": "",
+                "Award_Price": "",
+                "County": "",
+                "Section": "",
+                "Federal_Project_No": "",
+            }
+            results.append(contract_data)
+
+    js.logToUI(f"Repository Scrape Complete: Found {total_rows} total contracts. {filtered_count} contracts match criteria.", 'success')
+    return results
+
+# --- Main Logic Function ---
+
+async def scrape_contracts_and_build_csv(repo_url):
+    """
+    Main function to orchestrate the two-step scraping process.
+    """
+    
+    # 1. Fetch Repository HTML using pyfetch (intended CORS strategy)
+    js.logToUI(f"Fetching repository URL: {repo_url}", 'info')
+    try:
+        # pyfetch attempts the cross-origin request
+        response = await pyfetch(repo_url, method='GET', headers={"User-Agent": "Mozilla/5.0"})
+        if response.status != 200:
+            # Status 0 is a common sign of a strict CORS block in the browser context.
+            if response.status == 0:
+                 raise Exception(f"Failed to fetch the URL due to server restrictions (CORS/network block). The target website does not allow direct fetching from this tool.")
+            else:
+                 raise Exception(f"Failed to fetch. HTTP Status: {response.status}")
+        
+        repo_html = await response.string()
+        
+    except Exception as e:
+        js.logToUI(f"Network Error in Step 1: {str(e)}", 'error')
+        # Re-raise to be caught by the calling JavaScript function
+        raise
+
+    # 2. Scrape and Filter Repository Table
+    try:
+        contracts_to_scrape = scrape_repository_table(repo_html)
+    except Exception as e:
+        js.logToUI(f"Parsing Error in Step 1: {str(e)}", 'error')
+        raise
+
+    if not contracts_to_scrape:
+        js.logToUI("No contracts matched the filtering criteria. Stopping scrape.", 'warning')
+        return "" # Return empty CSV content
+
+    # 3. Iterate and Scrape Detail Pages
+    js.logToUI(f"Starting detailed scrape for {len(contracts_to_scrape)} contracts...", 'info')
+    
+    successful_scrapes = 0
+    
+    for i, contract in enumerate(contracts_to_scrape):
+        detail_url = contract['Source_URL']
+        item_contract = contract['Item-Contract']
+        js.logToUI(f"Scraping {i + 1}/{len(contracts_to_scrape)}: {item_contract}", 'info')
+        
+        try:
+            # Fetch detail page
+            detail_response = await pyfetch(detail_url, method='GET', headers={"User-Agent": "Mozilla/5.0"})
+            
+            if detail_response.status != 200:
+                js.logToUI(f"Warning: Failed to fetch detail for {item_contract}. Status {detail_response.status}. Skipping.", 'warning')
+                continue # Skip this contract
+            
+            detail_html = await detail_response.string()
+            detail_data = parse_detail_page(detail_html)
+            
+            # Merge the detail data into the repository data dictionary
+            contract.update(detail_data)
+            successful_scrapes += 1
+            
+        except Exception as e:
+            js.logToUI(f"Critical Error scraping detail for {item_contract}: {str(e)}. Skipping.", 'error')
+            continue
+            
+    js.logToUI(f"Detail Scrape Complete. Successfully processed {successful_scrapes} contracts.", 'success')
+    
+    # 4. Generate Final CSV
+    js.logToUI("Generating CSV file...", 'info')
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=FINAL_CSV_HEADERS, extrasaction='ignore', quoting=csv.QUOTE_MINIMAL)
+    
+    # Write Header
+    writer.writeheader()
+    
+    # Write Rows
+    writer.writerows(contracts_to_scrape)
+    
+    js.logToUI("CSV Generation Complete.", 'success')
+    
+    return output.getvalue()
+
+
+# --- Pyodide Initialization ---
+
+async def main():
+    """Initializes Pyodide and loads necessary packages."""
+    global pyodide
+    js.logToUI("Initializing Python runtime (Pyodide)...", 'info')
+    pyodide = await js.loadPyodide()
+    await pyodide.load_package("micropip")
+    await pyodide.run_code("import micropip")
+    # Install BeautifulSoup4 and requests for HTML parsing and network requests
+    await pyodide.run_code("await micropip.install(['beautifulsoup4', 'requests'])")
+    await pyodide.load_package("ssl") # Required for pyfetch to handle HTTPS
+    js.logToUI("Python runtime ready. Enter the Repository URL.", 'success')
+    js.els.scrapeBtn.disabled = False
+    js.els.scrapeBtn.innerText = "Load Contracts and Scrape Details"
+
+# Export the main scraping function to the JavaScript scope
+pyodide_globals = globals()
+pyodide_globals['scrape_contracts_and_build_csv'] = scrape_contracts_and_build_csv
+
+    </script>
+    
+    <script>
+        let pyodideInstance;
+        let csvContent = null;
+        
+        // Expose a helper function for Python to log back to the UI
+        function logToUI(message, type = 'info') {
+            const logElement = document.getElementById('log-output');
+            const colorClass = {
+                'info': 'text-brand-dark',
+                'success': 'text-green-600 font-bold',
+                'warning': 'text-yellow-600',
+                'error': 'text-red-600 font-bold'
+            }[type];
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('p');
+            logEntry.className = `p-1 ${colorClass}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            logElement.appendChild(logEntry);
+            
+            // Scroll to the bottom
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+
+        // Global element references for easy access in JS and Python log function
+        const els = {
+            repoUrlInput: document.getElementById('repoUrlInput'),
+            scrapeBtn: document.getElementById('scrapeBtn'),
+            downloadBtn: document.getElementById('downloadBtn'),
+            spinner: document.getElementById('spinner'),
+            buttonText: document.getElementById('button-text')
+        };
+        
+        // Expose elements to Python's scope for control
+        window.els = els;
+        window.logToUI = logToUI;
+
+        // Pyodide initialization function
+        async function initPyodide() {
+            try {
+                // Ensure Pyodide is loaded once
+                if (!window.pyodide) {
+                    await window.loadPyodide();
+                }
+                // Run the Python main function to initialize and install packages
+                await window.pyodide.runPythonAsync(document.getElementById('python-code').textContent);
+            } catch (err) {
+                console.error("Pyodide Initialization Failed:", err);
+                logToUI(`CRITICAL: Pyodide initialization failed. Check console for details.`, 'error');
+                els.scrapeBtn.disabled = true;
+                els.scrapeBtn.innerText = "Error Loading Tool";
+            }
+        }
+
+        // 1. Handle URL Input Change
+        els.repoUrlInput.addEventListener('input', () => {
+            // Enable/Disable button based on URL presence
+            els.scrapeBtn.disabled = els.repoUrlInput.value.trim() === '';
+            els.downloadBtn.classList.add('hidden');
+            csvContent = null;
+        });
+
+        // 2. Handle Scrape Button Click
+        els.scrapeBtn.addEventListener('click', async () => {
+            const repoUrl = els.repoUrlInput.value.trim();
+            if (!repoUrl) {
+                logToUI("Please enter a valid Repository URL.", 'warning');
+                return;
+            }
+
+            // UI Scrape Start State
+            els.scrapeBtn.disabled = true;
+            els.repoUrlInput.disabled = true;
+            els.downloadBtn.classList.add('hidden');
+            els.spinner.classList.remove('hidden');
+            els.buttonText.textContent = "Working...";
+            logToUI("Starting two-step scraping process...", 'info');
+            
+            csvContent = null;
+
+            try {
+                // Call the exported Python function via Pyodide
+                const pythonScrapeFunc = window.pyodide.globals.get('scrape_contracts_and_build_csv');
+                
+                // Await the asynchronous Python function execution
+                const csvResult = await pythonScrapeFunc(repoUrl);
+                
+                // Store the result
+                csvContent = csvResult;
+
+                // UI Completion State
+                els.scrapeBtn.classList.add('hidden');
+                els.downloadBtn.classList.remove('hidden');
+                logToUI("Scraping Complete. Ready to download the combined CSV file.", 'success');
+                
+            } catch (err) {
+                // Error handling from Python or JS execution
+                // Python exceptions are proxied to JS as PyodideError objects.
+                const errorMessage = err.message || String(err);
+                console.error("Scraping Error:", err);
+                // The error message for a CORS block will now be specific (defined in Python)
+                logToUI(`Critical Error: ${errorMessage}`, 'error');
+                
+                // Show the scrape button again for retry
+                els.scrapeBtn.classList.remove('hidden');
+                
+            } finally {
+                // Reset UI state
+                els.spinner.classList.add('hidden');
+                els.buttonText.textContent = "Load Contracts and Scrape Details";
+                els.repoUrlInput.disabled = false;
+                els.scrapeBtn.disabled = false;
+            }
+        });
+
+        // 3. Handle Download
+        els.downloadBtn.addEventListener('click', () => {
+            if (!csvContent) {
+                logToUI("No CSV content generated. Run the scrape first.", 'warning');
+                return;
+            }
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `enhanced_contract_data_${timestamp}.csv`);
+            link.style.visibility = 'hidden';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+
+        // Start initialization
+        window.addEventListener('load', initPyodide);
+
+    </script>
+</body>
+</html>
