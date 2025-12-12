@@ -465,7 +465,7 @@ def scrape_contract_page(html_content, url):
 
     return data
 
-async def process_urls(urls_list, js_callback):
+async def process_urls(urls_list, callback):
     """
     Takes a list of URLs, scrapes them one by one, reports progress to JS, 
     and returns the final CSV content as a string.
@@ -473,7 +473,7 @@ async def process_urls(urls_list, js_callback):
     all_scraped_data = []
     
     for i, url in enumerate(urls_list):
-        js_callback(i + 1, len(urls_list), url, "FETCHING")
+        callback(i + 1, len(urls_list), url, "FETCHING")
 
         try:
             response = await requests.get(url, timeout=10)
@@ -483,10 +483,10 @@ async def process_urls(urls_list, js_callback):
             data = scrape_contract_page(html_content, url)
             all_scraped_data.append(data)
             
-            js_callback(i + 1, len(urls_list), url, "SUCCESS")
+            callback(i + 1, len(urls_list), url, "SUCCESS")
             
         except Exception as e:
-            js_callback(i + 1, len(urls_list), url, f"FAILED: {str(e)}")
+            callback(i + 1, len(urls_list), url, f"FAILED: {str(e)}")
             all_scraped_data.append({
                 'Source_URL': url, 
                 'Contractor': f'ERROR: {str(e)[:50]}', 
@@ -595,16 +595,14 @@ async def process_urls(urls_list, js_callback):
             addLog(`Starting scrape of ${urls.length} URL(s)...`, 'info');
             
             try {
-                // Create the callback proxy
-                const callback = pyodide.globals.get('__builtins__').dict();
-                callback.set('progressCallback', progressCallback);
+                // Expose the JavaScript callback to Python's global scope
+                pyodide.globals.set('progressCallback', progressCallback);
                 
                 // Call the Python function
                 csvData = await pyodide.runPythonAsync(`
-import js
 async def run_scraper():
     urls = ${JSON.stringify(urls)}
-    result = await process_urls(urls, js.progressCallback)
+    result = await process_urls(urls, progressCallback)
     return result
 
 await run_scraper()
