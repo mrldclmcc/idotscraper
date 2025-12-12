@@ -69,7 +69,7 @@
     <header class="bg-brand-black text-white py-6 shadow-md">
         <div class="container mx-auto px-6">
             <h1 class="text-2xl font-bold tracking-tight">IDOT Contract Data Scraper</h1>
-            <p class="text-gray-400 text-sm mt-1">Client-side Government Data Extraction Tool</p>
+            <p class="text-gray-400 text-sm mt-1">Client-side Government Data Extraction Tool (via CORS Proxy)</p>
         </div>
     </header>
 
@@ -102,6 +102,9 @@
                     <span class="font-bold text-gray-500 mb-1">STEP 4</span>
                     <p>Download the generated CSV file.</p>
                 </div>
+            </div>
+            <div class="mt-4 text-xs text-gray-400">
+                Note: This tool uses a standard CORS proxy (corsproxy.io) to access the government server from your browser.
             </div>
         </section>
 
@@ -201,6 +204,7 @@ pyodide_http.patch_all()  # Patch requests to work in browser
 import requests
 import csv
 import io
+import urllib.parse
 from bs4 import BeautifulSoup
 
 # --- CORE SCRAPING LOGIC (Exactly as provided) ---
@@ -283,12 +287,19 @@ async def process_urls(urls_list, js_callback):
         await asyncio.sleep(0.05) 
 
         try:
+            # FIX FOR GITHUB PAGES / CORS ISSUES:
+            # We must use a CORS proxy because the browser prevents direct requests to gov sites.
+            # We encode the target URL to ensure query parameters (like &contractId=...) don't break the proxy URL.
+            encoded_url = urllib.parse.quote(url, safe='')
+            proxy_url = f"https://corsproxy.io/?{encoded_url}"
+            
             # Use Pyodide's patched requests
-            response = requests.get(url, timeout=10)
+            response = requests.get(proxy_url, timeout=10)
             response.raise_for_status() 
             html_content = response.text
             
             # Scrape the page
+            # Note: We pass the ORIGINAL url to the scraper so the CSV data source is correct
             data = scrape_contract_page(html_content, url)
             all_scraped_data.append(data)
             
