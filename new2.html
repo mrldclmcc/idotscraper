@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IDOT Enhanced Contract Scraper</title>
+    <title>IDOT Bid Letting Scraper</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
@@ -68,8 +68,8 @@
 
     <header class="bg-brand-black text-white py-6 shadow-md">
         <div class="container mx-auto px-6">
-            <h1 class="text-2xl font-bold tracking-tight">IDOT Enhanced Contract Scraper</h1>
-            <p class="text-gray-400 text-sm mt-1">Repository-Powered Data Extraction Tool</p>
+            <h1 class="text-2xl font-bold tracking-tight">IDOT Bid Letting Scraper</h1>
+            <p class="text-gray-400 text-sm mt-1">IDOT Web Scraping and Data Extraction Tool</p>
         </div>
     </header>
 
@@ -97,7 +97,7 @@
             <section class="bg-white border border-gray-200 rounded-lg p-6 shadow-sm mb-8">
                 <h2 class="text-lg font-semibold mb-4 border-b pb-2">Repository Page URL</h2>
                 <p class="text-sm text-gray-600 mb-4">
-                    Enter the URL of an IDOT Letting page (e.g., Notice of Letting). The tool will automatically extract and filter contracts based on county and status criteria.
+                    Enter the URL of an IDOT Notice of Letting URL. The tool will automatically filter relevant projects and extract low bidder and awardee data.
                 </p>
                 <div class="mb-4">
                     <label for="repo-url" class="block font-semibold mb-2">Repository URL</label>
@@ -112,7 +112,7 @@
                     <h3 class="font-bold mb-2">Filter Criteria:</h3>
                     <ul class="list-disc list-inside space-y-1 text-gray-700">
                         <li><strong>Counties:</strong> Boone, Cook, Grundy, DuPage, Kane, Kendall, Lake, McHenry, Will, or Various</li>
-                        <li><strong>Status:</strong> Active or Awarded</li>
+                        <li><strong>Status:</strong> Active, Executed, or Awarded</li>
                     </ul>
                 </div>
             </section>
