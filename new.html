@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IDOT Enhanced Contract Data Scraper</title>
+    <title>IDOT Automatic Contract Scraper (Pyfetch)</title>
     
     <!-- Tailwind CSS for Styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     
     <!-- Pyodide CDN -->
-    <!-- We use Pyodide for robust HTML parsing and network requests via Python (BeautifulSoup, requests) -->
+    <!-- Pyodide is used for robust HTML parsing (BeautifulSoup) and CSV generation, and network requests (pyfetch). -->
     <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
 
     <!-- Custom Config for Corporate Theme -->
@@ -59,14 +59,14 @@
 
     <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-xl p-6 sm:p-10 border border-brand-gray">
         <header class="mb-8 border-b pb-4">
-            <h1 class="text-3xl font-extrabold text-brand-black mb-2">Enhanced IDOT Contract Scraper</h1>
-            <p class="text-brand-dark">Automatically find and scrape specific contracts from a Repository site and enrich the output.</p>
+            <h1 class="text-3xl font-extrabold text-brand-black mb-2">IDOT Automatic Contract Scraper</h1>
+            <p class="text-brand-dark">Uses Pyodide's built-in <code>pyfetch</code> (as the original intended) to perform the automatic two-step scrape.</p>
         </header>
 
         <section id="input-section" class="space-y-6">
             <div id="repo-input-group">
                 <label for="repoUrlInput" class="block text-sm font-medium text-brand-black mb-2">
-                    Step 1: Repository Site URL (Attempting Direct Fetch)
+                    Step 1: Repository Site URL (Pyfetch)
                 </label>
                 <input type="url" id="repoUrlInput" placeholder="e.g., https://webapps1.dot.illinois.gov/WCTB/NoticeOfLetting" 
                        class="w-full p-3 border border-brand-gray rounded-lg focus:ring-2 focus:ring-brand-black focus:border-brand-black" required>
@@ -95,7 +95,7 @@
         </section>
         
         <footer class="mt-10 pt-4 border-t text-xs text-gray-500 text-center">
-            Powered by Pyodide (Python's BeautifulSoup & Requests) for robust web scraping.
+            Parsing and network logic powered by Python's Pyodide (`pyfetch` and BeautifulSoup).
         </footer>
     </div>
 
@@ -105,11 +105,10 @@ import js
 import json
 import csv
 from io import StringIO
-from pyodide.http import pyfetch
 from bs4 import BeautifulSoup
 
-# Global Pyodide variable holding the main interpreter instance
-pyodide = None
+# Import pyfetch from Pyodide
+from pyodide.http import pyfetch 
 
 # --- Configuration ---
 
@@ -133,16 +132,38 @@ FINAL_CSV_HEADERS = [
     "Contractor_Name", "Award_Price", "County", "Section", "Federal_Project_No", "Source_URL"
 ]
 
-# --- Core Scraping Functions ---
+# --- Network and Parsing Functions ---
 
-def parse_detail_page(detail_html):
+async def fetch_html_py(url):
+    """Fetches HTML content using pyfetch and handles errors."""
+    try:
+        js.logToUI(f"Fetching URL: {url}", 'info')
+        # Use headers to mimic a browser and increase success rate
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        }
+        
+        # Use pyfetch for the network request
+        response = await pyfetch(url, headers=headers)
+        
+        if response.status != 200:
+            raise Exception(f"HTTP Error {response.status}: Failed to retrieve content from {url}")
+            
+        return await response.text()
+        
+    except Exception as e:
+        js.logToUI(f"Network error during pyfetch: {e}", 'error')
+        raise
+
+def parse_detail_page(detail_html_str):
     """
     Parses the HTML content of a single contract detail page to extract 
     Contractor details, Award Price, and other secondary data points.
+    Returns the extracted data as a JSON string.
     """
-    soup = BeautifulSoup(detail_html, 'html.parser')
+    soup = BeautifulSoup(detail_html_str, 'html.parser')
     
-    # Initialize a dictionary for scraped data
     data = {
         "Contract_ID": "",
         "Contractor_Number": "",
@@ -153,12 +174,10 @@ def parse_detail_page(detail_html):
         "Federal_Project_No": "",
     }
 
-    # Find the main data table (assuming structure similar to uploaded file)
-    # This targets the main content area for the key-value pairs
     main_div = soup.find('div', class_='col-md-9')
     if not main_div:
-        js.logToUI(f"Warning: Could not find main content div on detail page.", 'warning')
-        return data
+        js.logToUI("Warning: Could not find main content div on detail page.", 'warning')
+        return json.dumps(data)
 
     # 1. Scrape Contract, Section, Federal Project Number from the top info block
     info_table = main_div.find('table', class_='table')
@@ -177,13 +196,11 @@ def parse_detail_page(detail_html):
                     data['Federal_Project_No'] = value
 
     # 2. Scrape Contractor details and Award Price
-    # Look for the 'Contractor Information' section
     contractor_header = soup.find('h3', string=lambda t: t and 'Contractor Information' in t)
     if contractor_header:
         contractor_table = contractor_header.find_next_sibling('table')
         if contractor_table:
             for row in contractor_table.find_all('tr'):
-                # Handle rows with labels and values (e.g., Name, Number, Price)
                 cols = row.find_all(['th', 'td'])
                 if len(cols) == 2:
                     key = cols[0].get_text(strip=True).replace(':', '')
@@ -194,36 +211,27 @@ def parse_detail_page(detail_html):
                     elif 'Contractor Name' in key:
                         data['Contractor_Name'] = value
                     elif 'Award Price' in key:
-                        # Clean up Award Price to keep just the amount
                         data['Award_Price'] = value.split('(')[0].strip()
                         
-    # The repository scrape provides the most reliable 'Counties' data.
-    return data
+    return json.dumps(data)
 
-def scrape_repository_table(repo_html):
+def scrape_repository_table(repo_html_str):
     """
-    Parses the Repository HTML, extracts all data rows from the main table,
-    filters them based on criteria (County/Status), and extracts the URL.
+    Parses the Repository HTML, extracts and filters all contract links.
+    Returns a JSON string of initial contract data and URLs.
     """
-    soup = BeautifulSoup(repo_html, 'html.parser')
+    soup = BeautifulSoup(repo_html_str, 'html.parser')
     js.logToUI("Parsing repository table and applying filters...", 'info')
 
-    # Find the main contract table 
     data_table = soup.find('table', class_='table')
     if not data_table:
-        raise ValueError("Could not find the main data table on the repository page. The page structure might have changed.")
+        raise ValueError("Could not find the main data table. Page structure may have changed.")
 
-    # Fixed indices based on the sample HTML structure:
     ITEM_CONTRACT_COL = 0
     STATUS_COL = 1
-    STATUS_DATE_COL = 2
-    REGION_COL = 3
-    DISTRICT_COL = 4
     COUNTIES_COL = 5
-    BULLETIN_DESC_COL = 7 
-
     
-    # Scrape the common Letting Date from the page title or header
+    # Scrape the common Letting Date
     letting_date = "N/A"
     letting_header = soup.find('h1')
     if letting_header and 'Letting' in letting_header.get_text():
@@ -234,31 +242,31 @@ def scrape_repository_table(repo_html):
          if letting_date_element:
              text = letting_date_element.get_text(strip=True)
              if 'Letting' in text:
-                 letting_date = text.split('\n')[0] 
-
-    
+                 letting_date = ' '.join(text.split()).split('\n')[0].strip()
     
     results = []
     total_rows = 0
     filtered_count = 0
 
-    for row in data_table.find('tbody').find_all('tr'):
+    tbody = data_table.find('tbody')
+    if not tbody:
+         raise ValueError("Could not find table body (tbody) element.")
+
+    for row in tbody.find_all('tr'):
         total_rows += 1
         cols = row.find_all('td')
         
-        if len(cols) < 8: # Expect at least 8 columns to cover all needed indices (0-7)
+        if len(cols) < 8: 
             continue
             
-        # Extract data points
         item_contract_cell = cols[ITEM_CONTRACT_COL]
         status = cols[STATUS_COL].get_text(strip=True)
-        status_date = cols[STATUS_DATE_COL].get_text(strip=True)
-        region = cols[REGION_COL].get_text(strip=True)
-        district = cols[DISTRICT_COL].get_text(strip=True)
+        status_date = cols[2].get_text(strip=True)
+        region = cols[3].get_text(strip=True)
+        district = cols[4].get_text(strip=True)
         counties = cols[COUNTIES_COL].get_text(strip=True)
-        bulletin_desc = cols[BULLETIN_DESC_COL].get_text(strip=True)
+        bulletin_desc = cols[7].get_text(strip=True)
         
-        # Extract URL
         a_tag = item_contract_cell.find('a', href=True)
         relative_url = a_tag['href'] if a_tag else None
         
@@ -274,10 +282,7 @@ def scrape_repository_table(repo_html):
             full_url = BASE_URL + relative_url
             filtered_count += 1
             
-            # Create a dictionary for this contract, containing all repository data
-            # and placeholders for the data to be scraped later
             contract_data = {
-                # Repository Data
                 "Item-Contract": item_contract_cell.get_text(strip=True),
                 "Status": status,
                 "Status Date": status_date,
@@ -285,131 +290,84 @@ def scrape_repository_table(repo_html):
                 "District": district,
                 "Counties": counties,
                 "Bulletin Description": bulletin_desc,
-                "Letting_Date": letting_date, # Common date for the whole page
+                "Letting_Date": letting_date,
                 "Source_URL": full_url,
-                
-                # Placeholders for Detail Scrape Data
-                "Contract_ID": "",
-                "Contractor_Number": "",
-                "Contractor_Name": "",
-                "Award_Price": "",
-                "County": "",
-                "Section": "",
-                "Federal_Project_No": "",
+                "Detail_URL": full_url # URL used for the second step fetch
             }
             results.append(contract_data)
 
-    js.logToUI(f"Repository Scrape Complete: Found {total_rows} total contracts. {filtered_count} contracts match criteria.", 'success')
-    return results
+    js.logToUI(f"Repository Scrape Complete: Found {total_rows} total contracts. {filtered_count} contracts match criteria. Starting detail fetch via Python...", 'success')
+    return json.dumps(results)
 
-# --- Main Logic Function ---
-
-async def scrape_contracts_and_build_csv(repo_url):
+async def perform_full_scrape(repo_url):
     """
-    Main function to orchestrate the two-step scraping process.
+    Main Python entry point to handle the entire scraping workflow.
+    1. Fetch repository HTML.
+    2. Scrape repository table and filter contracts.
+    3. Iterate, fetch detail HTML for each contract.
+    4. Parse detail data and enrich contracts.
+    5. Generate final CSV.
     """
-    
-    # 1. Fetch Repository HTML using pyfetch (intended CORS strategy)
-    js.logToUI(f"Fetching repository URL: {repo_url}", 'info')
-    try:
-        # pyfetch attempts the cross-origin request
-        response = await pyfetch(repo_url, method='GET', headers={"User-Agent": "Mozilla/5.0"})
-        if response.status != 200:
-            # Status 0 is a common sign of a strict CORS block in the browser context.
-            if response.status == 0:
-                 raise Exception(f"Failed to fetch the URL due to server restrictions (CORS/network block). The target website does not allow direct fetching from this tool.")
-            else:
-                 raise Exception(f"Failed to fetch. HTTP Status: {response.status}")
-        
-        repo_html = await response.string()
-        
-    except Exception as e:
-        js.logToUI(f"Network Error in Step 1: {str(e)}", 'error')
-        # Re-raise to be caught by the calling JavaScript function
-        raise
+    # 1. Fetch Repository HTML
+    repo_html = await fetch_html_py(repo_url)
 
-    # 2. Scrape and Filter Repository Table
-    try:
-        contracts_to_scrape = scrape_repository_table(repo_html)
-    except Exception as e:
-        js.logToUI(f"Parsing Error in Step 1: {str(e)}", 'error')
-        raise
+    # 2. Scrape repository table and filter
+    contracts_json = scrape_repository_table(repo_html)
+    contracts = json.loads(contracts_json)
 
-    if not contracts_to_scrape:
-        js.logToUI("No contracts matched the filtering criteria. Stopping scrape.", 'warning')
-        return "" # Return empty CSV content
+    if not contracts:
+        return json.dumps({"csv": None, "message": "No contracts matched the filtering criteria."})
 
-    # 3. Iterate and Scrape Detail Pages
-    js.logToUI(f"Starting detailed scrape for {len(contracts_to_scrape)} contracts...", 'info')
-    
+    # 3. Fetch and Parse Detail Pages
+    js.logToUI(f"Starting detailed scrape for {len(contracts)} contracts...", 'info')
+
     successful_scrapes = 0
-    
-    for i, contract in enumerate(contracts_to_scrape):
-        detail_url = contract['Source_URL']
-        item_contract = contract['Item-Contract']
-        js.logToUI(f"Scraping {i + 1}/{len(contracts_to_scrape)}: {item_contract}", 'info')
+    for i, contract in enumerate(contracts):
+        js.logToUI(f"Scraping {i + 1}/{len(contracts)}: {contract['Item-Contract']}", 'info')
         
         try:
-            # Fetch detail page
-            detail_response = await pyfetch(detail_url, method='GET', headers={"User-Agent": "Mozilla/5.0"})
+            # Fetch the detail page HTML using pyfetch
+            detail_html = await fetch_html_py(contract['Detail_URL'])
             
-            if detail_response.status != 200:
-                js.logToUI(f"Warning: Failed to fetch detail for {item_contract}. Status {detail_response.status}. Skipping.", 'warning')
-                continue # Skip this contract
+            # Parse detail HTML and get the enriched data object (as JSON string)
+            detail_data_json = parse_detail_page(detail_html)
+            detail_data = json.loads(detail_data_json)
             
-            detail_html = await detail_response.string()
-            detail_data = parse_detail_page(detail_html)
-            
-            # Merge the detail data into the repository data dictionary
+            # Merge the new data into the contract object
             contract.update(detail_data)
             successful_scrapes += 1
-            
+
         except Exception as e:
-            js.logToUI(f"Critical Error scraping detail for {item_contract}: {str(e)}. Skipping.", 'error')
-            continue
-            
+            js.logToUI(f"Warning: Detail scrape failed for {contract['Item-Contract']}. Skipping. Error: {e}", 'warning')
+            # The contract remains in the list with missing detail fields, as intended
+
     js.logToUI(f"Detail Scrape Complete. Successfully processed {successful_scrapes} contracts.", 'success')
     
-    # 4. Generate Final CSV
-    js.logToUI("Generating CSV file...", 'info')
+    # 5. Generate Final CSV
+    js.logToUI("Generating final CSV file...", 'info')
     output = StringIO()
-    writer = csv.DictWriter(output, fieldnames=FINAL_CSV_HEADERS, extrasaction='ignore', quoting=csv.QUOTE_MINIMAL)
     
-    # Write Header
+    # Define headers used for writing (including the empty column placeholder)
+    headers_to_write = FINAL_CSV_HEADERS[:7] + [""] + FINAL_CSV_HEADERS[8:]
+    writer = csv.DictWriter(output, fieldnames=headers_to_write, extrasaction='ignore', quoting=csv.QUOTE_MINIMAL)
+    
     writer.writeheader()
+    writer.writerows(contracts)
     
-    # Write Rows
-    writer.writerows(contracts_to_scrape)
-    
+    csv_content = output.getvalue()
     js.logToUI("CSV Generation Complete.", 'success')
-    
-    return output.getvalue()
 
+    # Return the result as a JSON string containing the CSV content
+    return json.dumps({"csv": csv_content, "message": "Scraping complete."})
 
-# --- Pyodide Initialization ---
-
-async def main():
-    """Initializes Pyodide and loads necessary packages."""
-    global pyodide
-    js.logToUI("Initializing Python runtime (Pyodide)...", 'info')
-    pyodide = await js.loadPyodide()
-    await pyodide.load_package("micropip")
-    await pyodide.run_code("import micropip")
-    # Install BeautifulSoup4 and requests for HTML parsing and network requests
-    await pyodide.run_code("await micropip.install(['beautifulsoup4', 'requests'])")
-    await pyodide.load_package("ssl") # Required for pyfetch to handle HTTPS
-    js.logToUI("Python runtime ready. Enter the Repository URL.", 'success')
-    js.els.scrapeBtn.disabled = False
-    js.els.scrapeBtn.innerText = "Load Contracts and Scrape Details"
 
 # Export the main scraping function to the JavaScript scope
 pyodide_globals = globals()
-pyodide_globals['scrape_contracts_and_build_csv'] = scrape_contracts_and_build_csv
+pyodide_globals['perform_full_scrape'] = perform_full_scrape
 
     </script>
     
     <script>
-        let pyodideInstance;
         let csvContent = null;
         
         // Expose a helper function for Python to log back to the UI
@@ -441,19 +399,32 @@ pyodide_globals['scrape_contracts_and_build_csv'] = scrape_contracts_and_build_c
             buttonText: document.getElementById('button-text')
         };
         
-        // Expose elements to Python's scope for control
+        // Expose elements and functions to Python's scope for control
         window.els = els;
         window.logToUI = logToUI;
 
-        // Pyodide initialization function
+        // Pyodide initialization function (FIXED)
         async function initPyodide() {
             try {
-                // Ensure Pyodide is loaded once
-                if (!window.pyodide) {
-                    await window.loadPyodide();
-                }
-                // Run the Python main function to initialize and install packages
-                await window.pyodide.runPythonAsync(document.getElementById('python-code').textContent);
+                logToUI("Initializing Python runtime (Pyodide)...", 'info');
+                
+                // 1. Load Pyodide Core and assign it to the global scope
+                window.pyodide = await loadPyodide();
+                
+                // 2. Install Packages
+                await window.pyodide.loadPackage("micropip");
+                await window.pyodide.runPythonAsync("import micropip");
+                // Install BeautifulSoup4
+                await window.pyodide.runPythonAsync("await micropip.install('beautifulsoup4')");
+                
+                // 3. Load the rest of the Python script (which now only contains functions)
+                // We use runPython to load the functions into the global Python scope
+                window.pyodide.runPython(document.getElementById('python-code').textContent);
+
+                logToUI("Python runtime ready. Enter the Repository URL.", 'success');
+                els.scrapeBtn.disabled = false;
+                els.scrapeBtn.innerText = "Load Contracts and Scrape Details";
+
             } catch (err) {
                 console.error("Pyodide Initialization Failed:", err);
                 logToUI(`CRITICAL: Pyodide initialization failed. Check console for details.`, 'error');
@@ -462,15 +433,8 @@ pyodide_globals['scrape_contracts_and_build_csv'] = scrape_contracts_and_build_c
             }
         }
 
-        // 1. Handle URL Input Change
-        els.repoUrlInput.addEventListener('input', () => {
-            // Enable/Disable button based on URL presence
-            els.scrapeBtn.disabled = els.repoUrlInput.value.trim() === '';
-            els.downloadBtn.classList.add('hidden');
-            csvContent = null;
-        });
 
-        // 2. Handle Scrape Button Click
+        // Handle Scrape Button Click
         els.scrapeBtn.addEventListener('click', async () => {
             const repoUrl = els.repoUrlInput.value.trim();
             if (!repoUrl) {
@@ -487,28 +451,33 @@ pyodide_globals['scrape_contracts_and_build_csv'] = scrape_contracts_and_build_c
             logToUI("Starting two-step scraping process...", 'info');
             
             csvContent = null;
-
+            
             try {
-                // Call the exported Python function via Pyodide
-                const pythonScrapeFunc = window.pyodide.globals.get('scrape_contracts_and_build_csv');
+                // Get the main Python entry point function
+                const pythonScrapeFunc = window.pyodide.globals.get('perform_full_scrape');
                 
-                // Await the asynchronous Python function execution
-                const csvResult = await pythonScrapeFunc(repoUrl);
-                
-                // Store the result
-                csvContent = csvResult;
+                // Call the Python function, which handles both fetches and parsing.
+                // Because it's an async Python function, we use the JS proxy directly.
+                const resultJson = await pythonScrapeFunc(repoUrl);
+                const result = JSON.parse(resultJson);
 
-                // UI Completion State
-                els.scrapeBtn.classList.add('hidden');
-                els.downloadBtn.classList.remove('hidden');
-                logToUI("Scraping Complete. Ready to download the combined CSV file.", 'success');
+                if (result.csv) {
+                    csvContent = result.csv;
+                    logToUI(result.message, 'success');
+                    
+                    // UI Completion State
+                    els.scrapeBtn.classList.add('hidden');
+                    els.downloadBtn.classList.remove('hidden');
+
+                } else {
+                    logToUI(result.message, 'warning');
+                    els.scrapeBtn.classList.remove('hidden');
+                }
                 
             } catch (err) {
                 // Error handling from Python or JS execution
-                // Python exceptions are proxied to JS as PyodideError objects.
                 const errorMessage = err.message || String(err);
                 console.error("Scraping Error:", err);
-                // The error message for a CORS block will now be specific (defined in Python)
                 logToUI(`Critical Error: ${errorMessage}`, 'error');
                 
                 // Show the scrape button again for retry
@@ -523,7 +492,7 @@ pyodide_globals['scrape_contracts_and_build_csv'] = scrape_contracts_and_build_c
             }
         });
 
-        // 3. Handle Download
+        // Handle Download
         els.downloadBtn.addEventListener('click', () => {
             if (!csvContent) {
                 logToUI("No CSV content generated. Run the scrape first.", 'warning');
