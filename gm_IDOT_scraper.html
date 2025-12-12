@@ -303,7 +303,11 @@ async def process_urls(urls_list, js_callback):
             data = scrape_contract_page(html_content, url)
             all_scraped_data.append(data)
             
-            js_callback(i + 1, len(urls), url, "SUCCESS")
+            # Send Success with details back to JS
+            # Format: SUCCESS|Contractor Name|Award Price
+            contractor = data.get('Contractor', 'N/A')
+            price = data.get('Award_Price', 'N/A')
+            js_callback(i + 1, len(urls), url, f"SUCCESS|{contractor}|{price}")
             
         except Exception as e:
             # Report failure
@@ -436,8 +440,16 @@ async def process_urls(urls_list, js_callback):
             // Update Log
             if (status.startsWith('FAILED')) {
                 logToUI(`Error: ${url} - ${status.split(':')[1]}`, 'error');
-            } else if (status === 'SUCCESS') {
-                logToUI(`Scraped: ${url}`, 'success');
+            } else if (status.startsWith('SUCCESS')) {
+                // Parse Success Details (if available)
+                const parts = status.split('|');
+                if (parts.length >= 3) {
+                    const contractor = parts[1];
+                    const price = parts[2];
+                    logToUI(`Found: ${contractor} (${price})`, 'success');
+                } else {
+                    logToUI(`Scraped: ${url}`, 'success');
+                }
             } else if (status === 'FETCHING') {
                 logToUI(`Fetching: ${url}...`, 'fetching');
             }
