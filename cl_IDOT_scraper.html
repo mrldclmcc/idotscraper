@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDOT Contract Data Scraper</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+            color: #1a1a1a;
+            line-height: 1.6;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1), 0 1px 3px rgba(0,0,0,0.08);
+            overflow: hidden;
+        }
+
+        header {
+            background: #1a1a1a;
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+
+        .instructions {
+            background: #f9f9f9;
+            border-left: 4px solid #333;
+            padding: 20px;
+            margin: 30px;
+            border-radius: 4px;
+        }
+
+        .instructions h2 {
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .instructions ol {
+            margin-left: 20px;
+        }
+
+        .instructions li {
+            margin: 8px 0;
+            color: #555;
+        }
+
+        .section {
+            padding: 30px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .section:last-child {
+            border-bottom: none;
+        }
+
+        .section-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #1a1a1a;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            padding: 15px;
+            border: 2px solid #d0d0d0;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+            transition: border-color 0.3s;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #333;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: #1a1a1a;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #333;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+
+        .btn-secondary {
+            background: white;
+            color: #333;
+            border: 2px solid #d0d0d0;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            border-color: #333;
+            background: #f5f5f5;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7); }
+            50% { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0); }
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #218838;
+            transform: translateY(-1px);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .progress-container {
+            display: none;
+        }
+
+        .progress-container.active {
+            display: block;
+        }
+
+        .master-progress {
+            margin-bottom: 20px;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #1a1a1a 0%, #333 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .log-container {
+            max-height: 400px;
+            overflow-y: auto;
+            background: #1a1a1a;
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+        }
+
+        .log-entry {
+            padding: 5px 0;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .log-entry.success {
+            color: #4caf50;
+        }
+
+        .log-entry.success::before {
+            content: "✓ ";
+        }
+
+        .log-entry.error {
+            color: #f44336;
+        }
+
+        .log-entry.error::before {
+            content: "✗ ";
+        }
+
+        .log-entry.info {
+            color: #2196f3;
+        }
+
+        .log-entry.info::before {
+            content: "→ ";
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            .section {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 1.5rem;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            button {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .status-badge.loading {
+            background: #2196f3;
+            color: white;
+        }
+
+        .status-badge.ready {
+            background: #4caf50;
+            color: white;
+        }
+
+        .status-badge.error {
+            background: #f44336;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>IDOT Contract Data Scraper</h1>
+            <div id="pyodide-status">
+                <span class="status-badge loading">Initializing Pyodide...</span>
+            </div>
+        </header>
+
+        <div class="instructions">
+            <h2>📋 How to Use This Tool</h2>
+            <ol>
+                <li><strong>Step 1:</strong> Paste contract URLs (one per line) in the text area below, or upload a .TXT file containing URLs.</li>
+                <li><strong>Step 2:</strong> Click the "Start Scrape" button to begin processing.</li>
+                <li><strong>Step 3:</strong> Wait for the progress bars to complete. You can monitor real-time status in the log.</li>
+                <li><strong>Step 4:</strong> Once complete, click "Download CSV" to save your data.</li>
+            </ol>
+        </div>
+
+        <div class="section">
+            <label for="url-input" class="section-title">Contract URLs</label>
+            <textarea 
+                id="url-input" 
+                placeholder="Paste URLs here, one per line...&#10;Example:&#10;https://idot.illinois.gov/doing-business/procurements/contract-details.html?id=12345&#10;https://idot.illinois.gov/doing-business/procurements/contract-details.html?id=67890"
+                aria-label="Contract URLs input"
+            ></textarea>
+            <div class="button-group">
+                <button class="btn-secondary" id="upload-btn" aria-label="Upload text file">
+                    📄 Upload .TXT File
+                </button>
+                <button class="btn-secondary" id="clear-btn" aria-label="Clear input">
+                    🗑️ Clear
+                </button>
+            </div>
+            <input type="file" id="file-input" accept=".txt" aria-label="File input">
+        </div>
+
+        <div class="section">
+            <button class="btn-primary" id="scrape-btn" disabled aria-label="Start scraping">
+                🚀 Start Scrape
+            </button>
+            <button class="btn-success hidden" id="download-btn" aria-label="Download CSV">
+                💾 Download CSV
+            </button>
+        </div>
+
+        <div class="section progress-container" id="progress-section">
+            <div class="master-progress">
+                <div class="section-title">Overall Progress</div>
+                <div id="progress-text">0 / 0 URLs Processed</div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progress-bar" style="width: 0%">0%</div>
+                </div>
+            </div>
+
+            <div class="section-title">Scraping Log</div>
+            <div class="log-container" id="log-container" role="log" aria-live="polite" aria-atomic="false"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        let pyodide;
+        let csvData = null;
+
+        const elements = {
+            urlInput: document.getElementById('url-input'),
+            uploadBtn: document.getElementById('upload-btn'),
+            clearBtn: document.getElementById('clear-btn'),
+            fileInput: document.getElementById('file-input'),
+            scrapeBtn: document.getElementById('scrape-btn'),
+            downloadBtn: document.getElementById('download-btn'),
+            progressSection: document.getElementById('progress-section'),
+            progressBar: document.getElementById('progress-bar'),
+            progressText: document.getElementById('progress-text'),
+            logContainer: document.getElementById('log-container'),
+            pyodideStatus: document.getElementById('pyodide-status')
+        };
+
+        // Initialize Pyodide
+        async function initPyodide() {
+            try {
+                addLog('Initializing Pyodide environment...', 'info');
+                pyodide = await loadPyodide();
+                
+                addLog('Installing Python packages (micropip, requests, beautifulsoup4)...', 'info');
+                await pyodide.loadPackage('micropip');
+                const micropip = pyodide.pyimport('micropip');
+                await micropip.install('requests');
+                await micropip.install('beautifulsoup4');
+                
+                addLog('Loading scraper script...', 'info');
+                
+                // Load the Python scraper code
+                await pyodide.runPythonAsync(`
+import requests
+import csv
+import io
+from bs4 import BeautifulSoup
+import os
+
+def scrape_contract_page(html_content, url):
+    """
+    Parses a single contract page's HTML to extract structured data.
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+    data = {'Source_URL': url}
+    
+    # 1. Letting Date and Contract ID
+    try:
+        letting_header = soup.select_one(".col-md-12 > h4")
+        if letting_header:
+            raw_text = letting_header.get_text("\\n", strip=True).split("\\n")
+            data['Letting_Date'] = raw_text[0] if len(raw_text) >= 1 else 'N/A'
+            data['Contract_ID'] = raw_text[1] if len(raw_text) >= 2 else 'N/A'
+    except Exception:
+        data['Letting_Date'] = 'Error'
+        data['Contract_ID'] = 'Error'
+
+    # 2. Robust Winner (Contractor/Award) Logic
+    winner_badge = soup.find("span", class_="alert-success")
+    
+    if winner_badge:
+        parent_li = winner_badge.find_parent("li")
+        
+        if parent_li:
+            contractor_strong_tag = parent_li.find("strong")
+            if contractor_strong_tag:
+                data['Contractor'] = contractor_strong_tag.get_text(strip=True)
+            else:
+                data['Contractor'] = 'Name Not Found'
+
+        data['Award_Price'] = winner_badge.get_text(strip=True)
+    else:
+        data['Contractor'] = 'No Award Found'
+        data['Award_Price'] = 'No Award Found'
+
+    # 3. Anchored "Table" Logic
+    def get_table_value_by_header(header_name):
+        try:
+            header = soup.find("th", string=lambda t: t and header_name in t)
+            if header:
+                headers = header.find_parent("tr").find_all("th")
+                col_index = headers.index(header)
+                table = header.find_parent("table")
+                first_row_cells = table.find("tbody").find("tr").find_all("td")
+                if col_index < len(first_row_cells):
+                    return first_row_cells[col_index].get_text(" ", strip=True)
+        except Exception:
+            return 'Error'
+        return 'N/A'
+
+    data['County'] = get_table_value_by_header("County(s)")
+    data['Section'] = get_table_value_by_header("Section(s)")
+    data['Federal_Project_No'] = get_table_value_by_header("Federal Project #")
+
+    return data
+
+async def process_urls(urls_list, js_callback):
+    """
+    Takes a list of URLs, scrapes them one by one, reports progress to JS, 
+    and returns the final CSV content as a string.
+    """
+    all_scraped_data = []
+    
+    for i, url in enumerate(urls_list):
+        js_callback(i + 1, len(urls_list), url, "FETCHING")
+
+        try:
+            response = await requests.get(url, timeout=10)
+            response.raise_for_status() 
+            html_content = response.text
+            
+            data = scrape_contract_page(html_content, url)
+            all_scraped_data.append(data)
+            
+            js_callback(i + 1, len(urls_list), url, "SUCCESS")
+            
+        except Exception as e:
+            js_callback(i + 1, len(urls_list), url, f"FAILED: {str(e)}")
+            all_scraped_data.append({
+                'Source_URL': url, 
+                'Contractor': f'ERROR: {str(e)[:50]}', 
+                'Award_Price': 'ERROR', 
+                'Letting_Date': 'ERROR', 
+                'Contract_ID': 'ERROR', 
+                'County': 'ERROR', 
+                'Section': 'ERROR', 
+                'Federal_Project_No': 'ERROR'
+            })
+
+    # POST-PROCESSING: Split the Contractor name
+    final_data = []
+    for item in all_scraped_data:
+        full_contractor = item.get('Contractor')
+
+        if full_contractor and full_contractor not in ('No Award Found', 'Name Not Found'):
+            parts = full_contractor.split(' ', 1)
+            item['Contractor_Number'] = parts[0] if len(parts) > 0 else 'N/A'
+            item['Contractor_Name'] = parts[1] if len(parts) > 1 else 'N/A'
+        else:
+            item['Contractor_Number'] = full_contractor
+            item['Contractor_Name'] = full_contractor
+        
+        del item['Contractor']
+        final_data.append(item)
+
+    # Define CSV headers
+    fieldnames = [
+        'Letting_Date', 
+        'Contract_ID', 
+        'Contractor_Number', 
+        'Contractor_Name',   
+        'Award_Price', 
+        'County', 
+        'Section', 
+        'Federal_Project_No',
+        'Source_URL'
+    ]
+    
+    # Write CSV to string buffer
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(final_data)
+    
+    return output.getvalue()
+`);
+                
+                elements.pyodideStatus.innerHTML = '<span class="status-badge ready">Ready</span>';
+                addLog('✓ Pyodide ready! You can now start scraping.', 'success');
+                
+            } catch (error) {
+                elements.pyodideStatus.innerHTML = '<span class="status-badge error">Failed</span>';
+                addLog(`✗ Failed to initialize: ${error.message}`, 'error');
+                console.error(error);
+            }
+        }
+
+        function addLog(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = message;
+            elements.logContainer.appendChild(entry);
+            elements.logContainer.scrollTop = elements.logContainer.scrollHeight;
+        }
+
+        function updateProgress(current, total) {
+            const percentage = Math.round((current / total) * 100);
+            elements.progressBar.style.width = `${percentage}%`;
+            elements.progressBar.textContent = `${percentage}%`;
+            elements.progressText.textContent = `${current} / ${total} URLs Processed`;
+        }
+
+        function progressCallback(current, total, url, status) {
+            updateProgress(current, total);
+            
+            const shortUrl = url.length > 60 ? url.substring(0, 57) + '...' : url;
+            
+            if (status === 'FETCHING') {
+                addLog(`Fetching: ${shortUrl}`, 'info');
+            } else if (status === 'SUCCESS') {
+                addLog(`Success: ${shortUrl}`, 'success');
+            } else if (status.startsWith('FAILED')) {
+                addLog(`${status}: ${shortUrl}`, 'error');
+            }
+        }
+
+        async function startScraping() {
+            const urls = elements.urlInput.value
+                .split('\n')
+                .map(url => url.trim())
+                .filter(url => url.length > 0);
+
+            if (urls.length === 0) {
+                alert('Please enter at least one URL.');
+                return;
+            }
+
+            // UI Updates
+            elements.scrapeBtn.disabled = true;
+            elements.scrapeBtn.innerHTML = '<span class="spinner"></span> Processing...';
+            elements.progressSection.classList.add('active');
+            elements.logContainer.innerHTML = '';
+            
+            addLog(`Starting scrape of ${urls.length} URL(s)...`, 'info');
+            
+            try {
+                // Create the callback proxy
+                const callback = pyodide.globals.get('__builtins__').dict();
+                callback.set('progressCallback', progressCallback);
+                
+                // Call the Python function
+                csvData = await pyodide.runPythonAsync(`
+import js
+async def run_scraper():
+    urls = ${JSON.stringify(urls)}
+    result = await process_urls(urls, js.progressCallback)
+    return result
+
+await run_scraper()
+`);
+                
+                addLog(`✓ Scraping complete! ${urls.length} URL(s) processed.`, 'success');
+                addLog('Click "Download CSV" to save your data.', 'info');
+                
+                // Show download button
+                elements.scrapeBtn.classList.add('hidden');
+                elements.downloadBtn.classList.remove('hidden');
+                
+            } catch (error) {
+                addLog(`✗ Error during scraping: ${error.message}`, 'error');
+                console.error(error);
+                elements.scrapeBtn.disabled = false;
+                elements.scrapeBtn.innerHTML = '🚀 Start Scrape';
+            }
+        }
+
+        function downloadCSV() {
+            if (!csvData) {
+                alert('No data to download.');
+                return;
+            }
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+            const filename = `contract_data_${timestamp}.csv`;
+            
+            const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+            
+            addLog(`✓ Downloaded: ${filename}`, 'success');
+        }
+
+        function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                elements.urlInput.value = event.target.result;
+                checkInput();
+                addLog(`✓ File uploaded: ${file.name}`, 'success');
+            };
+            reader.readAsText(file);
+        }
+
+        function checkInput() {
+            const hasContent = elements.urlInput.value.trim().length > 0;
+            elements.scrapeBtn.disabled = !hasContent || !pyodide;
+        }
+
+        // Event Listeners
+        elements.urlInput.addEventListener('input', checkInput);
+        elements.uploadBtn.addEventListener('click', () => elements.fileInput.click());
+        elements.fileInput.addEventListener('change', handleFileUpload);
+        elements.clearBtn.addEventListener('click', () => {
+            elements.urlInput.value = '';
+            checkInput();
+            addLog('Input cleared.', 'info');
+        });
+        elements.scrapeBtn.addEventListener('click', startScraping);
+        elements.downloadBtn.addEventListener('click', downloadCSV);
+
+        // Initialize on load
+        initPyodide();
+    </script>
+</body>
+</html>

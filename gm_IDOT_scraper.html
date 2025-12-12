@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDOT Contract Data Scraper</title>
+    
+    <!-- Tailwind CSS for Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Pyodide CDN -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+
+    <!-- Custom Config for Corporate Theme -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            black: '#0a0a0a',
+                            dark: '#1f1f1f',
+                            gray: '#e5e5e5',
+                            light: '#f9f9f9',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Custom Utilities */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #000;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .pulse-btn {
+            animation: pulse-black 2s infinite;
+        }
+        @keyframes pulse-black {
+            0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 0, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+        }
+    </style>
+</head>
+<body class="bg-brand-light text-brand-black min-h-screen flex flex-col font-sans">
+
+    <!-- Header -->
+    <header class="bg-brand-black text-white py-6 shadow-md">
+        <div class="container mx-auto px-6">
+            <h1 class="text-2xl font-bold tracking-tight">IDOT Contract Data Scraper</h1>
+            <p class="text-gray-400 text-sm mt-1">Client-side Government Data Extraction Tool</p>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow container mx-auto px-6 py-8 max-w-4xl">
+
+        <!-- System Status Banner -->
+        <div id="system-status" class="mb-6 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded text-sm flex items-center hidden">
+            <span class="mr-2 loader border-yellow-800 border-t-transparent"></span>
+            Initializing Python Environment (Pyodide)...
+        </div>
+
+        <!-- Instructions -->
+        <section class="bg-white border border-gray-200 rounded-lg p-6 shadow-sm mb-8" aria-labelledby="instructions-title">
+            <h2 id="instructions-title" class="text-lg font-semibold mb-4 border-b pb-2">User Instructions</h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                <div class="flex flex-col">
+                    <span class="font-bold text-gray-500 mb-1">STEP 1</span>
+                    <p>Paste URLs below or upload a .txt file containing links.</p>
+                </div>
+                <div class="flex flex-col">
+                    <span class="font-bold text-gray-500 mb-1">STEP 2</span>
+                    <p>Click "Start Scrape" to begin the extraction process.</p>
+                </div>
+                <div class="flex flex-col">
+                    <span class="font-bold text-gray-500 mb-1">STEP 3</span>
+                    <p>Wait for the progress bar to complete.</p>
+                </div>
+                <div class="flex flex-col">
+                    <span class="font-bold text-gray-500 mb-1">STEP 4</span>
+                    <p>Download the generated CSV file.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Input Area -->
+        <section class="mb-8">
+            <div class="flex justify-between items-end mb-2">
+                <label for="url-input" class="font-semibold text-lg">Target URLs</label>
+                <div class="flex gap-2">
+                     <button id="clear-btn" class="text-xs text-red-600 hover:text-red-800 font-medium underline px-2">
+                        Clear All
+                    </button>
+                    <input type="file" id="file-upload" accept=".txt" class="hidden">
+                    <button id="upload-btn" class="text-xs bg-gray-200 hover:bg-gray-300 text-brand-black px-3 py-1 rounded transition">
+                        Upload .TXT File
+                    </button>
+                </div>
+            </div>
+            <textarea 
+                id="url-input" 
+                rows="8" 
+                class="w-full p-4 border-2 border-gray-300 rounded-md focus:border-brand-black focus:ring-0 transition font-mono text-sm bg-white"
+                placeholder="https://idot.illinois.gov/contract/123...&#10;https://idot.illinois.gov/contract/456..."></textarea>
+        </section>
+
+        <!-- Actions -->
+        <div class="flex flex-col items-center justify-center mb-10">
+            <button id="scrape-btn" disabled class="bg-brand-black text-white px-8 py-3 rounded-md font-semibold text-lg shadow-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-3 w-full md:w-auto justify-center">
+                <span>Start Scrape</span>
+            </button>
+            
+            <button id="download-btn" class="hidden bg-green-700 text-white px-8 py-3 rounded-md font-semibold text-lg shadow-lg hover:bg-green-800 transition flex items-center gap-3 pulse-btn w-full md:w-auto justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>Download CSV</span>
+            </button>
+        </div>
+
+        <!-- Progress Area -->
+        <section id="progress-section" class="hidden bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="font-semibold">Processing Status</h3>
+                <span id="progress-text" class="text-sm font-mono text-gray-500">0 / 0</span>
+            </div>
+            
+            <!-- Master Progress Bar -->
+            <div class="w-full bg-gray-200 rounded-full h-4 mb-6 overflow-hidden">
+                <div id="progress-bar" class="bg-brand-black h-4 rounded-full transition-all duration-300 ease-out" style="width: 0%"></div>
+            </div>
+
+            <!-- Live Log -->
+            <div class="bg-gray-50 border border-gray-200 rounded p-4 h-64 overflow-y-auto font-mono text-xs" id="log-container">
+                <div class="text-gray-400 italic">Ready to start...</div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-gray-200 py-6 mt-auto">
+        <div class="container mx-auto px-6 text-center text-gray-500 text-sm">
+            &copy; 2024 IDOT Data Tools. Runs locally in your browser via Pyodide.
+        </div>
+    </footer>
+
+    <!-- Application Logic -->
+    <script>
+        // --- State Management ---
+        let pyodide = null;
+        let pyodideReady = false;
+        let csvContent = null;
+
+        // --- DOM Elements ---
+        const els = {
+            statusBanner: document.getElementById('system-status'),
+            urlInput: document.getElementById('url-input'),
+            fileInput: document.getElementById('file-upload'),
+            uploadBtn: document.getElementById('upload-btn'),
+            clearBtn: document.getElementById('clear-btn'),
+            scrapeBtn: document.getElementById('scrape-btn'),
+            downloadBtn: document.getElementById('download-btn'),
+            progressSection: document.getElementById('progress-section'),
+            progressBar: document.getElementById('progress-bar'),
+            progressText: document.getElementById('progress-text'),
+            logContainer: document.getElementById('log-container'),
+        };
+
+        // --- Python Script (Provided + Setup Wrapper) ---
+        // We use string interpolation to create the full python script.
+        const pythonScript = `
+import asyncio
+import micropip
+# Ensure requests and bs4 are installed
+await micropip.install(['requests', 'beautifulsoup4', 'pyodide-http'])
+
+import pyodide_http
+pyodide_http.patch_all()  # Patch requests to work in browser
+
+import requests
+import csv
+import io
+from bs4 import BeautifulSoup
+
+# --- CORE SCRAPING LOGIC (Exactly as provided) ---
+
+def scrape_contract_page(html_content, url):
+    """
+    Parses a single contract page's HTML to extract structured data.
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+    data = {'Source_URL': url}
+    
+    # 1. Letting Date and Contract ID
+    try:
+        letting_header = soup.select_one(".col-md-12 > h4")
+        if letting_header:
+            raw_text = letting_header.get_text("\\n", strip=True).split("\\n")
+            data['Letting_Date'] = raw_text[0] if len(raw_text) >= 1 else 'N/A'
+            data['Contract_ID'] = raw_text[1] if len(raw_text) >= 2 else 'N/A'
+    except Exception:
+        data['Letting_Date'] = 'Error'
+        data['Contract_ID'] = 'Error'
+
+    # 2. Robust Winner (Contractor/Award) Logic
+    winner_badge = soup.find("span", class_="alert-success")
+    
+    if winner_badge:
+        parent_li = winner_badge.find_parent("li")
+        
+        if parent_li:
+            contractor_strong_tag = parent_li.find("strong")
+            if contractor_strong_tag:
+                data['Contractor'] = contractor_strong_tag.get_text(strip=True)
+            else:
+                data['Contractor'] = 'Name Not Found'
+
+        data['Award_Price'] = winner_badge.get_text(strip=True)
+    else:
+        data['Contractor'] = 'No Award Found'
+        data['Award_Price'] = 'No Award Found'
+
+    # 3. Anchored "Table" Logic
+    def get_table_value_by_header(header_name):
+        try:
+            header = soup.find("th", string=lambda t: t and header_name in t)
+            if header:
+                headers = header.find_parent("tr").find_all("th")
+                col_index = headers.index(header)
+                table = header.find_parent("table")
+                first_row_cells = table.find("tbody").find("tr").find_all("td")
+                if col_index < len(first_row_cells):
+                    return first_row_cells[col_index].get_text(" ", strip=True)
+        except Exception:
+            return 'Error'
+        return 'N/A'
+
+    data['County'] = get_table_value_by_header("County(s)")
+    data['Section'] = get_table_value_by_header("Section(s)")
+    data['Federal_Project_No'] = get_table_value_by_header("Federal Project #")
+
+    return data
+
+
+# --- PYTHON ENTRY POINT ---
+
+async def process_urls(urls_list, js_callback):
+    """
+    Takes a list of URLs, scrapes them one by one, reports progress to JS, 
+    and returns the final CSV content as a string.
+    """
+    all_scraped_data = []
+    
+    # Converting Pyodide proxy to python list if needed
+    urls = [str(u) for u in urls_list]
+
+    for i, url in enumerate(urls):
+        # Report progress back to the JavaScript console/UI
+        js_callback(i + 1, len(urls), url, "FETCHING")
+        
+        # Crucial for UI updates: Yield control to JS event loop
+        await asyncio.sleep(0.05) 
+
+        try:
+            # Use Pyodide's patched requests
+            response = requests.get(url, timeout=10)
+            response.raise_for_status() 
+            html_content = response.text
+            
+            # Scrape the page
+            data = scrape_contract_page(html_content, url)
+            all_scraped_data.append(data)
+            
+            js_callback(i + 1, len(urls), url, "SUCCESS")
+            
+        except Exception as e:
+            # Report failure
+            js_callback(i + 1, len(urls), url, f"FAILED: {str(e)}")
+            all_scraped_data.append({
+                'Source_URL': url, 
+                'Contractor': f'ERROR: {str(e)[:50]}', 
+                'Award_Price': 'ERROR', 
+                'Letting_Date': 'ERROR', 
+                'Contract_ID': 'ERROR', 
+                'County': 'ERROR', 
+                'Section': 'ERROR', 
+                'Federal_Project_No': 'ERROR'
+            })
+
+
+    # 2. POST-PROCESSING STEP
+    final_data = []
+    for item in all_scraped_data:
+        full_contractor = item.get('Contractor')
+
+        if full_contractor and full_contractor not in ('No Award Found', 'Name Not Found') and 'ERROR' not in str(full_contractor):
+            parts = full_contractor.split(' ', 1)
+            item['Contractor_Number'] = parts[0] if len(parts) > 0 else 'N/A'
+            item['Contractor_Name'] = parts[1] if len(parts) > 1 else 'N/A'
+        else:
+            item['Contractor_Number'] = full_contractor
+            item['Contractor_Name'] = full_contractor
+        
+        # Remove the old, combined field
+        if 'Contractor' in item:
+            del item['Contractor']
+        final_data.append(item)
+
+
+    # 3. Define the CSV headers
+    fieldnames = [
+        'Letting_Date', 
+        'Contract_ID', 
+        'Contractor_Number', 
+        'Contractor_Name',    
+        'Award_Price', 
+        'County', 
+        'Section', 
+        'Federal_Project_No',
+        'Source_URL'
+    ]
+    
+    # 4. Write CSV to a string buffer
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(final_data)
+    
+    return output.getvalue()
+`;
+
+        // --- Initialization ---
+        async function initPyodide() {
+            els.statusBanner.classList.remove('hidden');
+            
+            try {
+                pyodide = await loadPyodide();
+                await pyodide.loadPackage("micropip");
+                
+                // Load the Python script
+                await pyodide.runPythonAsync(pythonScript);
+                
+                pyodideReady = true;
+                
+                // UI Update
+                els.statusBanner.innerHTML = '<span class="text-green-700 font-bold mr-2">✓</span> System Ready';
+                els.statusBanner.classList.remove('bg-yellow-50', 'border-yellow-200', 'text-yellow-800');
+                els.statusBanner.classList.add('bg-green-50', 'border-green-200', 'text-green-800');
+                
+                checkInputState(); // Enable button if text exists
+                
+                // Hide banner after 3 seconds
+                setTimeout(() => {
+                    els.statusBanner.classList.add('hidden');
+                }, 3000);
+
+            } catch (err) {
+                console.error(err);
+                els.statusBanner.innerHTML = `<span class="font-bold text-red-600 mr-2">!</span> Error loading Python: ${err.message}`;
+                els.statusBanner.classList.replace('bg-yellow-50', 'bg-red-50');
+                els.statusBanner.classList.replace('text-yellow-800', 'text-red-800');
+            }
+        }
+
+        // --- Helper Functions ---
+
+        function checkInputState() {
+            if (!pyodideReady) return;
+            const hasText = els.urlInput.value.trim().length > 0;
+            els.scrapeBtn.disabled = !hasText;
+        }
+
+        function logToUI(msg, type = 'info') {
+            const div = document.createElement('div');
+            div.className = "mb-1 py-1 border-b border-gray-100 last:border-0 fade-in";
+            
+            let icon = '';
+            let textClass = 'text-gray-600';
+
+            if (type === 'success') {
+                icon = '<span class="text-green-600 font-bold mr-2">✓</span>';
+                textClass = 'text-gray-800';
+            } else if (type === 'error') {
+                icon = '<span class="text-red-600 font-bold mr-2">✗</span>';
+                textClass = 'text-red-600';
+            } else if (type === 'fetching') {
+                icon = '<span class="text-blue-500 font-bold mr-2">➜</span>';
+            }
+
+            div.innerHTML = `${icon}<span class="${textClass}">${msg}</span>`;
+            els.logContainer.appendChild(div);
+            els.logContainer.scrollTop = els.logContainer.scrollHeight;
+        }
+
+        // This function is called FROM Python
+        function pyProgressCallback(current, total, url, status) {
+            // Update Text
+            els.progressText.innerText = `${current} / ${total}`;
+            
+            // Update Bar
+            const percentage = (current / total) * 100;
+            els.progressBar.style.width = `${percentage}%`;
+
+            // Update Log
+            if (status.startsWith('FAILED')) {
+                logToUI(`Error: ${url} - ${status.split(':')[1]}`, 'error');
+            } else if (status === 'SUCCESS') {
+                logToUI(`Scraped: ${url}`, 'success');
+            } else if (status === 'FETCHING') {
+                logToUI(`Fetching: ${url}...`, 'fetching');
+            }
+        }
+
+        // --- Event Listeners ---
+
+        // 1. Handle Text Input
+        els.urlInput.addEventListener('input', checkInputState);
+
+        // 2. Handle Clear
+        els.clearBtn.addEventListener('click', () => {
+            els.urlInput.value = '';
+            checkInputState();
+            els.downloadBtn.classList.add('hidden');
+            els.scrapeBtn.classList.remove('hidden');
+            els.progressSection.classList.add('hidden');
+        });
+
+        // 3. Handle File Upload
+        els.uploadBtn.addEventListener('click', () => els.fileInput.click());
+        els.fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                els.urlInput.value = event.target.result;
+                checkInputState();
+                logToUI("File uploaded successfully.");
+            };
+            reader.readAsText(file);
+            // Reset file input so same file can be selected again if needed
+            e.target.value = '';
+        });
+
+        // 4. Handle Scrape Action
+        els.scrapeBtn.addEventListener('click', async () => {
+            const rawText = els.urlInput.value.trim();
+            if (!rawText) return;
+
+            // Prepare UI
+            const urls = rawText.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+            
+            els.scrapeBtn.disabled = true;
+            els.scrapeBtn.innerHTML = '<span class="loader border-white border-t-transparent mr-2"></span> Processing...';
+            els.urlInput.disabled = true;
+            
+            els.progressSection.classList.remove('hidden');
+            els.logContainer.innerHTML = ''; // Clear logs
+            els.progressBar.style.width = '0%';
+            els.progressText.innerText = `0 / ${urls.length}`;
+            els.downloadBtn.classList.add('hidden');
+
+            try {
+                // Get the Python function
+                const processUrls = pyodide.globals.get('process_urls');
+                
+                // Run the Python function (awaiting the result)
+                // Note: We pass the JS callback function directly to Python
+                const csvResult = await processUrls(urls, pyProgressCallback);
+                
+                csvContent = csvResult;
+
+                // UI Completion State
+                els.scrapeBtn.classList.add('hidden');
+                els.downloadBtn.classList.remove('hidden');
+                logToUI("Scraping Complete. Ready to download.", 'success');
+
+            } catch (err) {
+                console.error(err);
+                logToUI(`Critical Error: ${err.message}`, 'error');
+                els.scrapeBtn.innerText = "Retry Scrape";
+                els.scrapeBtn.disabled = false;
+            } finally {
+                els.urlInput.disabled = false;
+            }
+        });
+
+        // 5. Handle Download
+        els.downloadBtn.addEventListener('click', () => {
+            if (!csvContent) return;
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `contract_data_${timestamp}.csv`);
+            link.style.visibility = 'hidden';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+
+        // Start initialization
+        window.addEventListener('load', initPyodide);
+
+    </script>
+</body>
+</html>
