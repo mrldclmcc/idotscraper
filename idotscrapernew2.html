@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDOT Bid Letting Scraper</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            black: '#0a0a0a',
+                            dark: '#1f1f1f',
+                            gray: '#e5e5e5',
+                            light: '#f9f9f9',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #000;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="bg-brand-light min-h-screen font-sans text-brand-black">
+
+    <div class="max-w-4xl mx-auto px-6 py-12">
+        <!-- Header -->
+        <header class="mb-12 border-b-2 border-brand-black pb-6 flex justify-between items-end">
+            <div>
+                <h1 class="text-4xl font-black uppercase tracking-tighter">IDOT Bid Scraper</h1>
+                <p class="text-sm font-medium text-gray-500 mt-2 italic">Web-based contract data extractor</p>
+            </div>
+            <div id="status-badge" class="px-3 py-1 bg-gray-200 text-[10px] font-bold uppercase rounded-full tracking-widest">
+                Initializing...
+            </div>
+        </header>
+
+        <!-- UI Layout -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            
+            <!-- Left Panel: Controls -->
+            <div class="md:col-span-1 space-y-6">
+                <div class="bg-white border-2 border-brand-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                    <label class="block text-xs font-bold uppercase mb-4 tracking-widest">Scrape Mode</label>
+                    <div class="flex flex-col gap-2">
+                        <button id="mode-repo" class="mode-btn active px-4 py-2 border-2 border-brand-black text-xs font-bold uppercase bg-brand-black text-white transition-all">
+                            Bulk Repository
+                        </button>
+                        <button id="mode-manual" class="mode-btn px-4 py-2 border-2 border-brand-black text-xs font-bold uppercase hover:bg-gray-100 transition-all">
+                            Manual URL List
+                        </button>
+                    </div>
+                </div>
+
+                <div id="repo-input-container" class="bg-white border-2 border-brand-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] fade-in">
+                    <label class="block text-xs font-bold uppercase mb-2 tracking-widest">Repository URL</label>
+                    <input type="text" id="repo-url" placeholder="https://webapps1.dot.illinois.gov/..." 
+                           class="w-full border-2 border-brand-black p-2 text-sm focus:outline-none focus:bg-yellow-50 mb-4"
+                           value="https://webapps1.dot.illinois.gov/WCTB/LbLettingDetail/Index/17df51b4-6b45-48c2-9dc3-3c1769a35633">
+                    
+                    <button id="scrape-btn" disabled class="w-full bg-brand-black text-white py-4 font-bold uppercase tracking-widest text-sm hover:invert transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                        Run Scraper
+                    </button>
+                    <button id="download-btn" class="hidden w-full bg-green-600 text-white py-4 font-bold uppercase tracking-widest text-sm hover:bg-green-700 transition-all">
+                        Download CSV
+                    </button>
+                </div>
+
+                <div id="manual-input-container" class="hidden bg-white border-2 border-brand-black p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] fade-in">
+                    <label class="block text-xs font-bold uppercase mb-2 tracking-widest">URL List (1 per line)</label>
+                    <textarea id="url-list" rows="8" placeholder="https://..." class="w-full border-2 border-brand-black p-2 text-xs focus:outline-none focus:bg-yellow-50 mb-4"></textarea>
+                    <button id="scrape-manual-btn" class="w-full bg-brand-black text-white py-4 font-bold uppercase tracking-widest text-sm hover:invert transition-all">
+                        Process List
+                    </button>
+                </div>
+            </div>
+
+            <!-- Right Panel: Log -->
+            <div class="md:col-span-2">
+                <div class="bg-brand-dark text-white p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] h-full min-h-[400px] flex flex-col">
+                    <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                        <span class="text-[10px] font-bold uppercase tracking-widest text-gray-400">Activity Log</span>
+                        <div id="loader-icon" class="hidden loader"></div>
+                    </div>
+                    <div id="log-output" class="text-xs font-mono space-y-1 overflow-y-auto flex-grow max-h-[500px] custom-scrollbar">
+                        <div>Ready to initialize Python environment...</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <footer class="mt-12 text-[10px] text-gray-400 font-medium uppercase tracking-[0.2em] flex justify-between">
+            <span>IDOT Scraper Utility</span>
+            <span>v2.1 / Fix: Browser Network Compatibility</span>
+        </footer>
+    </div>
+
+    <script type="text/javascript">
+        let pyodide;
+        const els = {
+            status: document.getElementById('status-badge'),
+            scrapeBtn: document.getElementById('scrape-btn'),
+            scrapeManualBtn: document.getElementById('scrape-manual-btn'),
+            downloadBtn: document.getElementById('download-btn'),
+            log: document.getElementById('log-output'),
+            repoUrl: document.getElementById('repo-url'),
+            urlInput: document.getElementById('url-list'),
+            loader: document.getElementById('loader-icon'),
+            modeRepo: document.getElementById('mode-repo'),
+            modeManual: document.getElementById('mode-manual'),
+            repoContainer: document.getElementById('repo-input-container'),
+            manualContainer: document.getElementById('manual-input-container')
+        };
+
+        let currentMode = 'repository';
+        let csvContent = "";
+
+        const pythonScript = `
+import pyodide_http
+import requests
+import urllib.parse
+from bs4 import BeautifulSoup
+import csv
+import io
+import time
+import json
+
+# Patch requests to use browser fetch
+pyodide_http.patch_all()
+
+def fetch_with_proxy(target_url):
+    """
+    Attempts to fetch data using a proxy. 
+    Uses corsproxy.io with correct param format and a fallback to allorigins.
+    """
+    encoded_url = urllib.parse.quote(target_url, safe='')
+    
+    # Try CorsProxy.io first with corrected URL parameter
+    proxy_url = f"https://corsproxy.io/?url={encoded_url}"
+    
+    # We omit 'Connection' and 'Accept-Encoding' as browsers forbid setting them
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+    }
+    
+    try:
+        # Note: verify=False is often needed in Pyodide for certain proxies
+        response = requests.get(proxy_url, headers=headers)
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        # Fallback to AllOrigins
+        all_origins_url = f"https://api.allorigins.win/get?url={encoded_url}"
+        try:
+            fallback_resp = requests.get(all_origins_url)
+            fallback_resp.raise_for_status()
+            # AllOrigins wraps the response in JSON
+            data = fallback_resp.json()
+            return data.get('contents', '')
+        except:
+            raise Exception(f"Connection failed for {target_url}. Please check your internet or try again later.")
+
+def scrape_repository_page(repo_url):
+    html = fetch_with_proxy(repo_url)
+    soup = BeautifulSoup(html, 'html.parser')
+    
+    links = []
+    for a in soup.find_all('a', href=True):
+        href = a['href']
+        if '/WCTB/LbLettingDetail/ContractDetails/' in href:
+            full_url = urllib.parse.urljoin("https://webapps1.dot.illinois.gov", href)
+            if full_url not in links:
+                links.append(full_url)
+    return links
+
+def scrape_contract_page(url, logger_func):
+    try:
+        html = fetch_with_proxy(url)
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        data = {
+            "Contract URL": url,
+            "Item No": "N/A",
+            "Contract No": "N/A",
+            "County": "N/A",
+            "Section": "N/A",
+            "Project No": "N/A",
+            "Job No": "N/A"
+        }
+
+        details_div = soup.find('div', id='details')
+        if details_div:
+            dt_elements = details_div.find_all('dt')
+            dd_elements = details_div.find_all('dd')
+            
+            for dt, dd in zip(dt_elements, dd_elements):
+                label = dt.get_text(strip=True).replace(':', '')
+                val = dd.get_text(strip=True)
+                
+                if 'Item No' in label: data['Item No'] = val
+                elif 'Contract No' in label: data['Contract No'] = val
+                elif 'County' in label: data['County'] = val
+                elif 'Section' in label: data['Section'] = val
+                elif 'Project No' in label: data['Project No'] = val
+                elif 'Job No' in label: data['Job No'] = val
+
+        logger_func(f"SUCCESS: {data['Contract No']}")
+        return data
+    except Exception as e:
+        logger_func(f"ERROR: Extraction failed for a contract.")
+        return None
+
+def process_contracts_from_repository(repo_url, logger_func):
+    logger_func(f"Scanning repository...")
+    try:
+        contract_urls = scrape_repository_page(repo_url)
+    except Exception as e:
+        logger_func(f"ERROR: Could not read repository page.")
+        return ""
+    
+    if not contract_urls:
+        logger_func("No contracts found.")
+        return ""
+
+    logger_func(f"Found {len(contract_urls)} items. Processing...")
+    
+    results = []
+    for i, url in enumerate(contract_urls):
+        res = scrape_contract_page(url, logger_func)
+        if res:
+            results.append(res)
+        time.sleep(0.1)
+
+    if not results:
+        return ""
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=results[0].keys())
+    writer.writeheader()
+    writer.writerows(results)
+    return output.getvalue()
+
+def process_urls_manual(url_list_str, logger_func):
+    urls = [u.strip() for u in url_list_str.split('\\n') if u.strip().startswith('http')]
+    logger_func(f"Processing {len(urls)} URLs...")
+    
+    results = []
+    for url in urls:
+        res = scrape_contract_page(url, logger_func)
+        if res:
+            results.append(res)
+        time.sleep(0.1)
+
+    if not results:
+        return ""
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=results[0].keys())
+    writer.writeheader()
+    writer.writerows(results)
+    return output.getvalue()
+`;
+
+        function logToUI(msg, type = 'info') {
+            const div = document.createElement('div');
+            const colors = {
+                info: 'text-gray-300',
+                success: 'text-green-400 font-bold',
+                error: 'text-red-400 font-bold',
+                progress: 'text-yellow-200'
+            };
+            div.className = `${colors[type]} mb-1`;
+            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            els.log.appendChild(div);
+            els.log.scrollTop = els.log.scrollHeight;
+        }
+
+        async function initPyodide() {
+            try {
+                logToUI("Initializing Secure Environment...");
+                pyodide = await loadPyodide();
+                // Load pyodide-http to fix the network request issue
+                await pyodide.loadPackage(["requests", "beautifulsoup4", "pyodide-http"]);
+                
+                await pyodide.runPythonAsync(pythonScript);
+                
+                els.status.innerText = "Ready";
+                els.status.className = "px-3 py-1 bg-green-200 text-green-800 text-[10px] font-bold uppercase rounded-full tracking-widest";
+                els.scrapeBtn.disabled = false;
+                logToUI("System Online.", "success");
+            } catch (err) {
+                logToUI(`Initialization failed. Please refresh.`, "error");
+                console.error(err);
+            }
+        }
+
+        // Mode Switching
+        els.modeRepo.addEventListener('click', () => {
+            currentMode = 'repository';
+            els.modeRepo.className = "mode-btn active px-4 py-2 border-2 border-brand-black text-xs font-bold uppercase bg-brand-black text-white";
+            els.modeManual.className = "mode-btn px-4 py-2 border-2 border-brand-black text-xs font-bold uppercase hover:bg-gray-100";
+            els.repoContainer.classList.remove('hidden');
+            els.manualContainer.classList.add('hidden');
+        });
+
+        els.modeManual.addEventListener('click', () => {
+            currentMode = 'manual';
+            els.modeManual.className = "mode-btn active px-4 py-2 border-2 border-brand-black text-xs font-bold uppercase bg-brand-black text-white";
+            els.modeRepo.className = "mode-btn px-4 py-2 border-2 border-brand-black text-xs font-bold uppercase hover:bg-gray-100";
+            els.manualContainer.classList.remove('hidden');
+            els.repoContainer.classList.add('hidden');
+        });
+
+        // Trigger Scrape
+        async function runScrape(type) {
+            els.loader.classList.remove('hidden');
+            els.scrapeBtn.disabled = true;
+            els.scrapeManualBtn.disabled = true;
+            
+            try {
+                const logger = (msg) => logToUI(msg, msg.startsWith('SUCCESS') ? 'success' : (msg.startsWith('ERROR') ? 'error' : 'progress'));
+                pyodide.globals.set("js_logger", logger);
+
+                if (type === 'repository') {
+                    const url = els.repoUrl.value;
+                    csvContent = await pyodide.runPythonAsync(`process_contracts_from_repository("${url}", js_logger)`);
+                } else {
+                    const list = els.urlInput.value.replace(/\n/g, '\\n');
+                    csvContent = await pyodide.runPythonAsync(`process_urls_manual("${list}", js_logger)`);
+                }
+
+                if (csvContent && csvContent.length > 10) {
+                    els.downloadBtn.classList.remove('hidden');
+                    els.scrapeBtn.classList.add('hidden');
+                    els.scrapeManualBtn.classList.add('hidden');
+                    logToUI("Extraction Complete.", "success");
+                } else {
+                    logToUI("No data could be retrieved. The site might be blocking the proxy.", "error");
+                }
+
+            } catch (err) {
+                logToUI(`Error: Operation failed.`, "error");
+            } finally {
+                els.loader.classList.add('hidden');
+                els.scrapeBtn.disabled = false;
+                els.scrapeManualBtn.disabled = false;
+            }
+        }
+
+        els.scrapeBtn.addEventListener('click', () => runScrape('repository'));
+        els.scrapeManualBtn.addEventListener('click', () => runScrape('manual'));
+
+        els.downloadBtn.addEventListener('click', () => {
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            link.setAttribute("download", `bid_data_${new Date().getTime()}.csv`);
+            link.click();
+        });
+
+        window.addEventListener('load', initPyodide);
+
+    </script>
+</body>
+</html>
