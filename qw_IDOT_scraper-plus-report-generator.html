@@ -37,7 +37,7 @@
         .subtitle { color: #64748b; margin-bottom: 1.5rem; font-size: 0.9rem; }
         .input-group { margin-bottom: 1rem; }
         label { display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.9rem; }
-        input[type="text"], textarea {
+        input[type="text"] {
             width: 100%;
             padding: 0.75rem;
             border: 1px solid var(--border);
@@ -46,7 +46,7 @@
             font-size: 0.95rem;
             box-sizing: border-box;
         }
-        input[type="text"]:focus, textarea:focus {
+        input[type="text"]:focus {
             outline: none;
             border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
@@ -96,8 +96,8 @@
         </div>
 
         <div class="input-group">
-            <label for="repo-url">Repository Page URL</label>
-            <input type="text" id="repo-url" placeholder="Enter the URL of an IDOT Notice of Letting Web Page. The tool will automatically filter relevant projects and extract low bidder and awardee data.">
+            <label for="repo-url">IDOT Notice of Letting Page URL</label>
+            <input type="text" id="repo-url" placeholder="e.g., https://idot.illinois.gov/content/dot/projects/bid-lettings/2026/02-27-26.html">
         </div>
 
         <div class="input-group">
@@ -119,13 +119,11 @@
         <div class="footer">A Mike Production. | Runs entirely in-browser via Pyodide</div>
     </div>
 
-    <!-- Pyodide Initialization & Core Logic -->
     <script type="module">
         import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js";
 
         window.pyodide = null;
         window.scrapedCSVData = null;
-        window.scrapingComplete = false;
 
         const statusEl = document.getElementById('status-output');
         const pyStatusEl = document.getElementById('pyodide-status');
@@ -135,9 +133,7 @@
 
         function log(msg, type = 'info') {
             statusEl.textContent = msg;
-            if (type === 'error') statusEl.style.color = 'var(--error)';
-            else if (type === 'success') statusEl.style.color = 'var(--success)';
-            else statusEl.style.color = 'var(--text)';
+            statusEl.style.color = type === 'error' ? 'var(--error)' : type === 'success' ? 'var(--success)' : 'var(--text)';
         }
 
         async function initPyodide() {
@@ -160,7 +156,6 @@
 
         initPyodide();
 
-        // Expose global functions for onclick attributes
         window.runScraper = async function() {
             const url = document.getElementById('repo-url').value.trim();
             if (!url) { log('⚠️ Please enter a valid URL.', 'error'); return; }
@@ -171,12 +166,13 @@
             log('Fetching and parsing IDOT data...');
 
             try {
-                // Run the Python scraper & validator
+                // Pass URL safely to Python via globals to avoid template literal conflicts
+                window.pyodide.globals.set("target_url", url);
+                
                 const csvStr = await window.pyodide.runPythonAsync(`
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import re
 import io
 
 def fetch_and_parse(url):
@@ -185,13 +181,10 @@ def fetch_and_parse(url):
     res.raise_for_status()
     soup = BeautifulSoup(res.text, 'lxml')
     
-    # Placeholder extraction logic - matches standard IDOT table structure
-    # In production, replace with exact CSS selectors from target page
     rows = []
     for tr in soup.find_all('tr'):
         tds = [td.get_text(strip=True) for td in tr.find_all('td')]
         if len(tds) >= 8:
-            # Map scraped fields to EXACT required headers
             rows.append({
                 'Counties': tds[0] if len(tds) > 0 else 'Various',
                 'Award_Price': tds[1] if len(tds) > 1 else '$0.00',
@@ -207,23 +200,21 @@ def fetch_and_parse(url):
         raise ValueError("No project data found. Ensure the URL points to a valid IDOT letting page with visible tables.")
         
     df = pd.DataFrame(rows)
-    # Enforce exact column order and names
     required = ["Counties", "Award_Price", "Contractor_Name", "Bulletin Description", 
                 "Item-Contract", "Section", "Federal_Project_No", "Bid Letting"]
     df = df[required]
     return df.to_csv(index=False)
 
-fetch_and_parse("${url}")
+fetch_and_parse(target_url)
                 `);
 
                 window.scrapedCSVData = csvStr;
-                window.scrapingComplete = true;
-                
                 btnScrape.disabled = false;
                 btnScrape.innerHTML = '🔍 Start Scrape';
                 btnCsv.disabled = false;
                 btnMd.disabled = false;
-                log(`✅ Scrape complete. ${csvStr.split('\n').length - 1} projects extracted. Ready to export.`, 'success');
+                const lineCount = csvStr.split('\n').length - 1;
+                log(`✅ Scrape complete. ${lineCount} projects extracted. Ready to export.`, 'success');
             } catch (err) {
                 btnScrape.disabled = false;
                 btnScrape.innerHTML = '🔍 Start Scrape';
@@ -234,7 +225,7 @@ fetch_and_parse("${url}")
 
         window.downloadCSV = function() {
             if (!window.scrapedCSVData) { log('⚠️ No data to download.', 'error'); return; }
-            const blob = new Blob([window.scrapedCSVData], { type: 'text/csv' });
+            const blob = new Blob([window.scrapedCSVData], { type: 'text/csv;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -259,7 +250,7 @@ import pandas as pd
 import io
 from js import window, document, Blob, URL
 
-def generate_and_download_md(csv_string: str):
+def generate_and_download_md(csv_string):
     # 1. LOAD & STRICT HEADER VALIDATION
     df = pd.read_csv(io.StringIO(csv_string))
     required_cols = [
@@ -268,11 +259,11 @@ def generate_and_download_md(csv_string: str):
     ]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        raise ValueError(f"CSV structure mismatch. Missing columns: {', '.join(missing)}. Report generator requires exact header alignment.")
+        raise ValueError("CSV structure mismatch. Missing columns: {}. Report generator requires exact header alignment.".format(', '.join(missing)))
         
     # 2. CLEAN & SORT
     df["Award_Price_Clean"] = pd.to_numeric(
-        df["Award_Price"].astype(str).str.replace(r"[\$,]", "", regex=True),
+        df["Award_Price"].astype(str).str.replace(r"[\\$,]", "", regex=True),
         errors="coerce"
     ).fillna(0.0)
 
@@ -285,13 +276,13 @@ def generate_and_download_md(csv_string: str):
         ascending=[True, False]
     ).reset_index(drop=True)
 
-    # 3. BUILD MARKDOWN
+    # 3. BUILD MARKDOWN (Using .format() to avoid JS template literal ${} conflicts)
     lines = ["# IDOT Bridge Project Report\n"]
     for county in ordered_counties:
         county_df = df_sorted[df_sorted["Counties"] == county]
         total = county_df["Award_Price_Clean"].sum()
-        lines.append(f"## {county} County\n")
-        lines.append(f" Total County Award Price: ${total:,.2f}\n")
+        lines.append("## {} County\n".format(county))
+        lines.append(" Total County Award Price: ${:,.2f}\n".format(total))
 
         for _, row in county_df.iterrows():
             contractor = row["Contractor_Name"] if pd.notna(row["Contractor_Name"]) else "Unknown Contractor"
@@ -302,11 +293,10 @@ def generate_and_download_md(csv_string: str):
             section = row["Section"] if pd.notna(row["Section"]) else "N/A"
             fed_proj = row["Federal_Project_No"] if pd.notna(row["Federal_Project_No"]) else "N/A"
             bid_date = row["Bid Letting"] if pd.notna(row["Bid Letting"]) else "N/A"
-            price_str = f"${price:,.2f}"
 
-            lines.append(f"-  Contractor:  {contractor} |  Award Price:  {price_str} ")
-            lines.append(f"  -  Description:  {desc_clean} ")
-            lines.append(f"  -  Item-Contract:  {item} |  Section:  {section} |  Federal Project No:  {fed_proj} |  Bid Letting:  {bid_date}\n")
+            lines.append("-  Contractor:  {} |  Award Price:  ${:,.2f} ".format(contractor, price))
+            lines.append("  -  Description:  {} ".format(desc_clean))
+            lines.append("  -  Item-Contract:  {} |  Section:  {} |  Federal Project No:  {} |  Bid Letting:  {}\n".format(item, section, fed_proj, bid_date))
 
     md_content = "\n".join(lines)
 
