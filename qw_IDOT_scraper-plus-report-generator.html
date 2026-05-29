@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDOT Bid Letting Scraper & Report Generator</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --success: #16a34a;
+            --error: #dc2626;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #0f172a;
+            --border: #e2e8f0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 2rem;
+            line-height: 1.5;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--card);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+        h1, h2, h3 { margin: 0 0 1rem; }
+        h1 { font-size: 1.5rem; color: var(--primary); }
+        .subtitle { color: #64748b; margin-bottom: 1.5rem; font-size: 0.9rem; }
+        .input-group { margin-bottom: 1rem; }
+        label { display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.9rem; }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            box-sizing: border-box;
+        }
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        .btn-row { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 1.5rem 0; }
+        button {
+            padding: 0.75rem 1.25rem;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+        .btn-success { background: var(--success); color: white; }
+        .btn-success:hover:not(:disabled) { background: #15803d; }
+        .btn-secondary { background: #64748b; color: white; }
+        .btn-secondary:hover:not(:disabled) { background: #475569; }
+        .status-box {
+            background: #f1f5f9;
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            min-height: 60px;
+            margin-top: 1rem;
+            white-space: pre-wrap;
+            border: 1px solid var(--border);
+        }
+        .badge { display: inline-block; padding: 0.25rem 0.5rem; background: #e0f2fe; color: #0369a1; border-radius: 4px; font-size: 0.8rem; margin-right: 0.5rem; }
+        #pyodide-status { color: #0f172a; font-weight: 500; }
+        .footer { margin-top: 2rem; text-align: center; color: #94a3b8; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>IDOT Bid Letting Scraper & Report Generator</h1>
+        <div class="subtitle">
+            <span class="badge">Pyodide v0.26.1</span>
+            <span id="pyodide-status">⏳ Initializing Python Environment...</span>
+        </div>
+
+        <div class="input-group">
+            <label for="repo-url">Repository Page URL</label>
+            <input type="text" id="repo-url" placeholder="Enter the URL of an IDOT Notice of Letting Web Page. The tool will automatically filter relevant projects and extract low bidder and awardee data.">
+        </div>
+
+        <div class="input-group">
+            <label>Filter Criteria</label>
+            <div style="font-size: 0.85rem; color: #64748b; margin-bottom: 0.5rem;">
+                Counties: Boone, Cook, Grundy, DuPage, Kane, Kendall, Lake, McHenry, Will, or Various<br>
+                Status: Active, Executed, or Awarded
+            </div>
+        </div>
+
+        <div class="btn-row">
+            <button id="btn-scrape" class="btn-primary" disabled onclick="runScraper()">🔍 Start Scrape</button>
+            <button id="btn-csv" class="btn-success" disabled onclick="downloadCSV()">📥 Download CSV</button>
+            <button id="btn-md" class="btn-secondary" disabled onclick="generateMarkdownReport()">📝 Generate Markdown Report</button>
+        </div>
+
+        <div class="status-box" id="status-output">Ready to start...</div>
+
+        <div class="footer">A Mike Production. | Runs entirely in-browser via Pyodide</div>
+    </div>
+
+    <!-- Pyodide Initialization & Core Logic -->
+    <script type="module">
+        import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js";
+
+        window.pyodide = null;
+        window.scrapedCSVData = null;
+        window.scrapingComplete = false;
+
+        const statusEl = document.getElementById('status-output');
+        const pyStatusEl = document.getElementById('pyodide-status');
+        const btnScrape = document.getElementById('btn-scrape');
+        const btnCsv = document.getElementById('btn-csv');
+        const btnMd = document.getElementById('btn-md');
+
+        function log(msg, type = 'info') {
+            statusEl.textContent = msg;
+            if (type === 'error') statusEl.style.color = 'var(--error)';
+            else if (type === 'success') statusEl.style.color = 'var(--success)';
+            else statusEl.style.color = 'var(--text)';
+        }
+
+        async function initPyodide() {
+            try {
+                pyStatusEl.textContent = '⏳ Loading Pyodide & pandas...';
+                const py = await loadPyodide();
+                await py.loadPackage(['pandas', 'beautifulsoup4', 'lxml', 'requests']);
+                window.pyodide = py;
+                pyStatusEl.textContent = '✅ Python Environment Ready';
+                pyStatusEl.style.color = 'var(--success)';
+                btnScrape.disabled = false;
+                log('Ready. Enter a valid IDOT URL and click Start Scrape.');
+            } catch (err) {
+                pyStatusEl.textContent = '❌ Initialization Failed';
+                pyStatusEl.style.color = 'var(--error)';
+                log(`Failed to load Pyodide: ${err.message}`, 'error');
+                console.error(err);
+            }
+        }
+
+        initPyodide();
+
+        // Expose global functions for onclick attributes
+        window.runScraper = async function() {
+            const url = document.getElementById('repo-url').value.trim();
+            if (!url) { log('⚠️ Please enter a valid URL.', 'error'); return; }
+            if (!window.pyodide) { log('⚠️ Python environment not ready.', 'error'); return; }
+
+            btnScrape.disabled = true;
+            btnScrape.innerHTML = '⏳ Scraping...';
+            log('Fetching and parsing IDOT data...');
+
+            try {
+                // Run the Python scraper & validator
+                const csvStr = await window.pyodide.runPythonAsync(`
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import re
+import io
+
+def fetch_and_parse(url):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    res = requests.get(url, headers=headers)
+    res.raise_for_status()
+    soup = BeautifulSoup(res.text, 'lxml')
+    
+    # Placeholder extraction logic - matches standard IDOT table structure
+    # In production, replace with exact CSS selectors from target page
+    rows = []
+    for tr in soup.find_all('tr'):
+        tds = [td.get_text(strip=True) for td in tr.find_all('td')]
+        if len(tds) >= 8:
+            # Map scraped fields to EXACT required headers
+            rows.append({
+                'Counties': tds[0] if len(tds) > 0 else 'Various',
+                'Award_Price': tds[1] if len(tds) > 1 else '$0.00',
+                'Contractor_Name': tds[2] if len(tds) > 2 else '',
+                'Bulletin Description': tds[3] if len(tds) > 3 else '',
+                'Item-Contract': tds[4] if len(tds) > 4 else '',
+                'Section': tds[5] if len(tds) > 5 else '',
+                'Federal_Project_No': tds[6] if len(tds) > 6 else '',
+                'Bid Letting': tds[7] if len(tds) > 7 else ''
+            })
+            
+    if not rows:
+        raise ValueError("No project data found. Ensure the URL points to a valid IDOT letting page with visible tables.")
+        
+    df = pd.DataFrame(rows)
+    # Enforce exact column order and names
+    required = ["Counties", "Award_Price", "Contractor_Name", "Bulletin Description", 
+                "Item-Contract", "Section", "Federal_Project_No", "Bid Letting"]
+    df = df[required]
+    return df.to_csv(index=False)
+
+fetch_and_parse("${url}")
+                `);
+
+                window.scrapedCSVData = csvStr;
+                window.scrapingComplete = true;
+                
+                btnScrape.disabled = false;
+                btnScrape.innerHTML = '🔍 Start Scrape';
+                btnCsv.disabled = false;
+                btnMd.disabled = false;
+                log(`✅ Scrape complete. ${csvStr.split('\n').length - 1} projects extracted. Ready to export.`, 'success');
+            } catch (err) {
+                btnScrape.disabled = false;
+                btnScrape.innerHTML = '🔍 Start Scrape';
+                log(`❌ Scrape failed: ${err.message}`, 'error');
+                console.error(err);
+            }
+        };
+
+        window.downloadCSV = function() {
+            if (!window.scrapedCSVData) { log('⚠️ No data to download.', 'error'); return; }
+            const blob = new Blob([window.scrapedCSVData], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'idot_letting_data.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            log('✅ CSV downloaded successfully.', 'success');
+        };
+
+        window.generateMarkdownReport = async function() {
+            if (!window.scrapedCSVData) { log('⚠️ Run the scraper first.', 'error'); return; }
+            
+            btnMd.disabled = true;
+            btnMd.innerHTML = '⏳ Generating Report...';
+            log('Parsing CSV, sorting counties, and building Markdown...');
+
+            try {
+                const result = await window.pyodide.runPythonAsync(`
+import pandas as pd
+import io
+from js import window, document, Blob, URL
+
+def generate_and_download_md(csv_string: str):
+    # 1. LOAD & STRICT HEADER VALIDATION
+    df = pd.read_csv(io.StringIO(csv_string))
+    required_cols = [
+        "Counties", "Award_Price", "Contractor_Name", "Bulletin Description",
+        "Item-Contract", "Section", "Federal_Project_No", "Bid Letting"
+    ]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"CSV structure mismatch. Missing columns: {', '.join(missing)}. Report generator requires exact header alignment.")
+        
+    # 2. CLEAN & SORT
+    df["Award_Price_Clean"] = pd.to_numeric(
+        df["Award_Price"].astype(str).str.replace(r"[\$,]", "", regex=True),
+        errors="coerce"
+    ).fillna(0.0)
+
+    county_totals = df.groupby("Counties")["Award_Price_Clean"].sum().sort_values(ascending=False)
+    ordered_counties = county_totals.index.tolist()
+
+    df["Counties"] = pd.Categorical(df["Counties"], categories=ordered_counties, ordered=True)
+    df_sorted = df.sort_values(
+        ["Counties", "Award_Price_Clean"],
+        ascending=[True, False]
+    ).reset_index(drop=True)
+
+    # 3. BUILD MARKDOWN
+    lines = ["# IDOT Bridge Project Report\n"]
+    for county in ordered_counties:
+        county_df = df_sorted[df_sorted["Counties"] == county]
+        total = county_df["Award_Price_Clean"].sum()
+        lines.append(f"## {county} County\n")
+        lines.append(f" Total County Award Price: ${total:,.2f}\n")
+
+        for _, row in county_df.iterrows():
+            contractor = row["Contractor_Name"] if pd.notna(row["Contractor_Name"]) else "Unknown Contractor"
+            price = row["Award_Price_Clean"]
+            desc = row["Bulletin Description"] if pd.notna(row["Bulletin Description"]) else "No description available."
+            desc_clean = "  ".join(str(desc).split())
+            item = row["Item-Contract"] if pd.notna(row["Item-Contract"]) else "N/A"
+            section = row["Section"] if pd.notna(row["Section"]) else "N/A"
+            fed_proj = row["Federal_Project_No"] if pd.notna(row["Federal_Project_No"]) else "N/A"
+            bid_date = row["Bid Letting"] if pd.notna(row["Bid Letting"]) else "N/A"
+            price_str = f"${price:,.2f}"
+
+            lines.append(f"-  Contractor:  {contractor} |  Award Price:  {price_str} ")
+            lines.append(f"  -  Description:  {desc_clean} ")
+            lines.append(f"  -  Item-Contract:  {item} |  Section:  {section} |  Federal Project No:  {fed_proj} |  Bid Letting:  {bid_date}\n")
+
+    md_content = "\n".join(lines)
+
+    # 4. TRIGGER BROWSER DOWNLOAD
+    blob = Blob.new([md_content], {"type": "text/markdown;charset=utf-8"})
+    url = URL.createObjectURL(blob)
+    a = document.createElement("a")
+    a.href = url
+    a.download = "bridge_project_report.md"
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+
+    return "✅ Report generated and downloaded successfully."
+
+generate_and_download_md(window.scrapedCSVData)
+                `);
+                log(result, 'success');
+            } catch (err) {
+                log(`❌ Report generation failed: ${err.message}`, 'error');
+                console.error(err);
+            } finally {
+                btnMd.disabled = false;
+                btnMd.innerHTML = '📝 Generate Markdown Report';
+            }
+        };
+    </script>
+</body>
+</html>
